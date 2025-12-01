@@ -1,29 +1,102 @@
 
-## C++ template repository
+# DEB
 
-- You can start your c++ repository starting from this template repository and customize if needed.
-- You may install [pre-commit](https://pre-commit.com/) through `pip install pre-commit` and do `pre-commit install`.
-  - Customize the pre-commit configuration in `.pre-commit-config.yaml`.
-- Any changes are welcome!
+<img src="https://slack-files.com/TQZR8FFK4-F0A1JC6NBDW-0baa8f9dd6">
+*Logo created with [nanobanana](https://github.com/CryptoLabInc/nanobanana)*
 
-### Build
+DEB is a homomorphic encryption, decryption, and key generation library implementing the CKKS scheme. 
+
+## Features
+
+- Secret-key generation and management
+- Encryption and decryption operations
+- Evaluation(public)-key generation and management 
+- Serialization support for encrypted objects
+
+## Build
+
+### Quick Start
 ```sh
-cmake --preset release && cmake --build --preset ci && ctest --preset all-test
+cmake --preset release
+cmake --build --preset release
 ```
 
-### Best practices
-- Follow [CppCoreGuidelines](https://github.com/isocpp/CppCoreGuidelines).
-- For cmake, follow [Modern cmake](https://cliutils.gitlab.io/modern-cmake/chapters/install/installing.html) and [More modern cmake](https://hsf-training.github.io/hsf-training-cmake-webpage/aio/index.html) as much as you can.
-- See also other cpp templates like [modern-cpp-template](https://github.com/filipdutescu/modern-cpp-template), [gui_starter_template](https://github.com/cpp-best-practices/gui_starter_template), or [ModernCppStarter](https://github.com/TheLartians/ModernCppStarter) to learn more.
+### Build Options
 
-### Misc
-- If `clang-tidy` outputs errors on 3rd party headers, change `HeaderFilterRegex` in `.clang-tidy`.
+The project uses CMake presets for configuration. Available presets:
 
-### TODOs
-- Add code coverage support for both lcov and gcov.
-- Add valgrind support.
-- Lint clang-tidy-diff support.
-- Make `main.yml` check the all hooks via `pre-commit run --hook-stage push`
+- **release**: Optimized build with `-O3` optimization
+- **debug**: Debug build with symbols and no optimization
+
+You can also configure custom builds:
+
+```sh
+# Configure with custom options
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=ON
+
+# Build
+cmake --build build
+
+# Install
+cmake --build build --target install
+```
+
+### CMake Options
+
+- `BUILD_SHARED_LIBS`: Build a shared library instead of a static one. (default: OFF)
+- `DEB_BUILD_BENCHMARK`: Build the benchmark suite. (default: OFF)
+- `DEB_BUILD_DOXYGEN`: Build the documentation with Doxygen. (default: OFF)
+- `DEB_BUILD_EXAMPLES`: Build the example programs. (default: ON)
+- `DEB_BUILD_TEST`: Build the test suite. (default: ON)
+- `DEB_BUILD_WITH_OMP`: Build with OpenMP support. (default: ON)
+- `DEB_INSTALL`: Install the deb library and headers. (default: ON)
+- `DEB_INSTALL_ALEA`: Install the alea library when installing deb. (default: OFF)
+- `DEB_INSTALL_FLATBUFFERS`: Install the flatbuffers library when installing deb. (default: OFF)
+- `DEB_RUNTIME_RESOURCE_CHECK`: Enable runtime resource check. (default: ON)
+
+## Testing
+
+Run all tests:
+```sh
+ctest --preset all-test
+```
+
+Run specific test suites:
+```sh
+cd build
+ctest -R <test_name_pattern>
+```
+
+## Examples
+
+The `examples/` directory contains sample programs demonstrating various features of the DEB library:
+
+- **KeyGeneration.cpp**: Demonstrates how to generate secret keys and evaluation keys
+  ```sh
+  ./build/examples/KeyGeneration
+  ```
+
+- **EnDecryption.cpp**: Shows basic encryption and decryption operations with a single secret key
+  ```sh
+  ./build/examples/EnDecryption
+  ```
+
+- **EnDecryption-MultiSecret.cpp**: Demonstrates encryption and decryption with multi-secret parameter 
+  ```sh
+  ./build/examples/EnDecryption-MultiSecret
+  ```
+
+- **SeedOnlySecretKey.cpp**: Shows how to generate and use seed-only secret keys for efficient key storage
+  ```sh
+  ./build/examples/SeedOnlySecretKey
+  ```
+
+- **Serialization.cpp**: Demonstrates how to serialize and deserialize encrypted objects and keys
+  ```sh
+  ./build/examples/Serialization
+  ```
+
+All examples are automatically built when `DEB_BUILD_EXAMPLES=ON` (default). Run them from the build directory after building the project.
 
 ### License
 deb is licensed under the Apache License 2.0, which means that you are free to get and use it for commercial and non-commercial purposes as long as you fulfill its conditions.
