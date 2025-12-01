@@ -1,7 +1,7 @@
 
 # DEB
 
-<img src="https://slack-files.com/TQZR8FFK4-F0A1JC6NBDW-0baa8f9dd6">
+![DEB LOGO](https://files.slack.com/files-pri/TQZR8FFK4-F0A1JC6NBDW/gemini_generated_image_m8vwx5m8vwx5m8vw.png?pub_secret=0baa8f9dd6)
 *Logo created with [nanobanana](https://github.com/CryptoLabInc/nanobanana)*
 
 DEB is a homomorphic encryption, decryption, and key generation library implementing the CKKS scheme. 
@@ -11,7 +11,7 @@ DEB is a homomorphic encryption, decryption, and key generation library implemen
 - Secret-key generation and management
 - Encryption and decryption operations
 - Evaluation(public)-key generation and management 
-- Serialization support for encrypted objects
+- Serialization support for encrypted objects and keys
 
 ## Build
 
