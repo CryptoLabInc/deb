@@ -1,0 +1,30 @@
+[
+  {
+    "_comment1": "This file contains examples of custom parameter presets for the deb library.",
+    "_comment2": "The parameters are in JSON format, and all the values from PARENT are inherited.",
+    "_comment3": "You can add your own presets here. (Need to recompile the library.)",
+    "_comment4": "Refer to the documentation for details on each field.",
+    "_comment5": "Necessary values:",
+    "_comment6": "    NAME, LOG_DEGREE, LOG_BP_SIZE, LOG_QP_SIZE, LOG_TP_SIZE",
+    "_comment7": "Optional values (Default):",
+    "_comment8": "    CHAIN_LENGTH(1), RANK(1), NUM_SECRET(1), GADGET_RANK(1),",
+    "_comment9": "    HWT(DEGREE*RANK*2/3), SCALE_FACTORS([0.0,...])",
+    "_comment10": "Note: default encryption level = CHAIN_LENGTH - 1"
+  },
+  {
+    "NAME": "CUSTOML0",
+    "LOG_DEGREE": 12,
+    "LOG_BP_SIZE": 44,
+    "LOG_QP_SIZE": 36,
+    "LOG_TP_SIZE": 48
+  },
+  {
+    "NAME": "CUSTOML1",
+    "LOG_DEGREE": 12,
+    "GADGET_RANK": 2,
+    "LOG_BP_SIZE": 44,
+    "LOG_QP_SIZE": 36,
+    "LOG_TP_SIZE": 48,
+    "CHAIN_LENGTH": 2
+  }
+]

@@ -1,0 +1,21 @@
+This project includes third-party libraries:
+
+- alea (Apache License)
+  Copyright © 2025 CryptoLab, Inc.
+  https://github.com/CryptoLabInc/alea
+
+- nlohmann/json (MIT License)
+  Copyright © 2013-2025 Niels Lohmann
+  https://github.com/nlohmann/json
+
+- flatbuffers (Apache License)
+  Copyright © 2021 Google Inc.
+  https://github.com/google/flatbuffers
+
+- googletest (Apache License)
+  Copyright © 2021 Google Inc.
+  https://github.com/google/googletest
+
+- benchmark (Apache License)
+  Copyright © 2021 Google Inc.
+  https://github.com/google/benchmark

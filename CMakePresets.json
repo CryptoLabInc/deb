@@ -1,0 +1,65 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 21,
+    "patch": 0
+  },
+  "configurePresets": [
+    {
+      "name": "default",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build"
+    },
+    {
+      "name": "release",
+      "displayName": "Release build",
+      "inherits": "default",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    },
+    {
+      "name": "benchmark",
+      "inherits": "release",
+      "cacheVariables": {
+        "DEB_RUNTIME_RESOURCE_CHECK": "OFF",
+        "DEB_BUILD_BENCHMARK": "ON",
+        "DEB_BUILD_WITH_OMP": "ON"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "default",
+      "hidden": true,
+      "configurePreset": "default"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "release"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "test-base",
+      "hidden": true,
+      "output": {
+        "outputOnFailure": true
+      },
+      "execution": {
+        "noTestsAction": "error"
+      },
+      "environment": {
+        "OMP_NUM_THREADS": "8"
+      }
+    },
+    {
+      "name": "all-test",
+      "inherits": "test-base",
+      "configurePreset": "release",
+      "configuration": "release"
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+[
+  {
+    "_comment1": "This file contains examples of parameter presets for the deb library.",
+    "_comment2": "The parameters are in JSON format, and all the values from PARENT are inherited.",
+    "_comment3": "You can add your own presets here. (Need to recompile the library.)",
+    "_comment4": "Refer to the documentation for details on each field.",
+    "_comment5": "Necessary values:",
+    "_comment6": "    NAME, LOG_DEGREE, NUM_BASE, NUM_QP, NUM_TP, PRIMES.",
+    "_comment7": "Optional values (Default):",
+    "_comment8": "    PARENT(Self), RANK(1), NUM_SECRET(1), GADGET_RANK(1),",
+    "_comment9": "    ENC_LEVEL(0), HWT(DEGREE*RANK*2/3), SCALE_FACTORS([0.0,...])"
+  },
+  {
+    "NAME": "FGbD12L0",
+    "PARENT": "FGb",
+    "LOG_DEGREE": 12,
+    "NUM_QP": 0,
+    "NUM_TP": 1,
+    "GADGET_RANK": 1,
+    "ENC_LEVEL": 0,
+    "HWT": 2730,
+    "PRIMES": [
+      288230376147386369,
+      2251799810670593
+    ]
+  },
+  {
+    "NAME": "FGb",
+    "LOG_DEGREE": 16,
+    "NUM_BASE": 1,
+    "NUM_QP": 24,
+    "NUM_TP": 5,
+    "GADGET_RANK": 5,
+    "ENC_LEVEL": 12,
+    "HWT": 192,
+    "PRIMES": [
+      288230376147386369,
+
+      4398044938241,
+      4398043496449,
+      4398042972161,
+
+      4398042185729,
+      4398034845697,
+      4398029340673,
+      4398028029953,
+      4398021869569,
+      4398021476353,
+      4398021345281,
+      4398018723841,
+      4398018592769,
+
+      288230376115535873,
+      288230376138735617,
+      288230376135196673,
+      288230376132182017,
+      288230376131788801,
+      288230376129691649,
+      288230376128643073,
+      288230376126545921,
+      288230376122613761,
+
+      288230376121434113,
+      288230376121040897,
+      288230376118026241,
+
+      576460752300015617,
+      576460752298835969,
+      576460752298180609,
+      1152921504606584833,
+      1152921504598720513
+    ],
+    "SCALE_FACTORS": [
+      42.038389957315403,
+      42.019194720683842,
+      42.009596865891794,
+      42.004797852504382,
+      42.002398216823572,
+      42.001197195102421,
+      42.00059578132997,
+      42.00029485946456,
+      42.000143388128826,
+      42.000067587967102,
+      42.000029666388286,
+      42.00001027563966,
+      42.000000558767383
+    ]
+  },
+  {
+    "NAME": "FGbMS",
+    "PARENT": "FGb",
+    "NUM_SECRET": 4
+  }
+]

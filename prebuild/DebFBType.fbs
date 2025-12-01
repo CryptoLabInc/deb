@@ -1,0 +1,74 @@
+namespace deb_fb;
+
+struct Complex {
+    real:float64;
+    imag:float64;
+}
+
+struct Complex32 {
+    real:float32;
+    imag:float32;
+}
+
+table Message {
+    size:uint32;
+    data:[Complex];
+}
+
+table Message32 {
+    size:uint32;
+    data:[Complex32];
+}
+
+table Coeff {
+    size:uint32;
+    data:[float64];
+}
+
+table Coeff32 {
+    size:uint32;
+    data:[float32];
+}
+
+table PolyUnit {
+    prime:uint64;
+    degree:uint32;
+    ntt_state:bool;
+    array:[uint64];
+}
+
+table Poly {
+    size:uint32;
+    rnspolys:[PolyUnit];
+}
+
+table Cipher {
+    preset:uint32;
+    encoding:uint32;
+    size:uint32;
+    bigpolys:[Poly];
+}
+
+table Sk {
+    preset:uint32;
+    seeds:[uint64];
+    coeffs:[int8];
+    bigpolys:[Poly];
+}
+
+table Swk {
+    preset:uint32;
+    type:uint32;
+    rot_idx:uint32;
+    dnum:uint32;
+    ax:[Poly];
+    bx:[Poly];
+}
+
+union DebUnion { Swk, Sk, Cipher, Poly, PolyUnit, Message, Message32, Coeff, Coeff32 }
+
+table Deb {
+    list:[DebUnion];
+}
+
+root_type Deb;
