@@ -50,7 +50,7 @@ jobs:
           TARGET_SHA=$( git rev-parse HEAD^ )
         fi
         echo "TARGET_SHA=$TARGET_SHA" >> $GITHUB_ENV
-        
+
     - name: Generate compile commands
       shell: bash -l {0}
       run: cmake --preset ci
