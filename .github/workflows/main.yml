@@ -30,19 +30,15 @@ jobs:
   pre-commit:
     runs-on: ubuntu-latest
     steps:
+    - name: Install pre-commit
+      run: |
+        pip install --upgrade pip
+        pip install pre-commit
+
     - uses: actions/checkout@v4
       with:
         # Include previous commit
         fetch-depth: 2
-    #- name: Create conda env
-    #  if: ${{ inputs.conda_env_name != '' }}
-    #  uses: conda-incubator/setup-miniconda@v3
-    #  with:
-    #    miniforge-version: "latest"
-    #    auto-activate-base: "false"
-    #    remove-profiles: true
-    #    clean-patched-environment-file: true
-    #    activate-environment: ${{ inputs.conda_env_name }}
 
     - name: Select target SHA to compare and fetch if required
       run: |
@@ -54,12 +50,7 @@ jobs:
           TARGET_SHA=$( git rev-parse HEAD^ )
         fi
         echo "TARGET_SHA=$TARGET_SHA" >> $GITHUB_ENV
-
-    #- name: Install required conda packages
-    #  if: ${{ inputs.conda_env_name != '' && inputs.required_packages != '' }}
-    #  shell: bash -l {0}
-    #  run: conda install -c conda-forge -y pre-commit ${{ inputs.required_packages }}
-
+        
     - name: Generate compile commands
       shell: bash -l {0}
       run: cmake --preset ci
