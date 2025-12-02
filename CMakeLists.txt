@@ -102,8 +102,8 @@ add_dependencies(${PROJECT_NAME}_obj generate_flatbuffers
 set_my_project_warnings(${PROJECT_NAME}_obj)
 set_property(TARGET ${PROJECT_NAME}_obj PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-if(not MSVC)
-  target_compile_options(${PROJECT_NAME}_obj PRIVATE -Wpedantic)
+if(NOT MSVC)
+  target_compile_options(${PROJECT_NAME}_obj PRIVATE -Wno-pedantic)
 endif()
 
 target_link_libraries(
