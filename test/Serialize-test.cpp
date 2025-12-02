@@ -157,7 +157,7 @@ TEST_P(Serialize, SecretKeySerializationTest) {
 
 TEST_P(Serialize, SwkSerializationTest) {
     const SwitchKeyKind kind = SWK_ROT;
-    SwitchKey swk(context, kind, dist_u64(gen) % (degree >> 1 - 1) + 1);
+    SwitchKey swk(context, kind, dist_u64(gen) % ((degree >> 1) - 1) + 1);
 
     for (Size i = 0; i < swk.axSize(); ++i) {
         for (Size j = 0; j < swk.ax(i).size(); ++j) {
