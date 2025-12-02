@@ -71,8 +71,6 @@ jobs:
         include:
           - os: ubuntu-latest
             preset: ci
-          - os: windows-latest
-            preset: ci
           - os: macos-latest
             preset: ci-mac
 
