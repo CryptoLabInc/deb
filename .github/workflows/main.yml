@@ -62,11 +62,11 @@ jobs:
 
     - name: Generate compile commands
       shell: bash -l {0}
-      run: cmake --preset clang-ci
+      run: cmake --preset ci
 
     - name: Build for generated headers
       shell: bash -l {0}
-      run: cmake --build --preset clang-ci
+      run: cmake --build --preset ci
 
     - name: Run pre-commit for commit and push stages.
       shell: bash -l {0}
