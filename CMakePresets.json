@@ -30,6 +30,13 @@
       }
     },
     {
+      "name": "ci-mac",
+      "inherits": "ci",
+      "cacheVariables": {
+        "DEB_BUILD_WITH_OMP": "OFF"
+      }
+    },
+    {
       "name": "ci-custom-param",
       "inherits": "ci",
       "cacheVariables": {
@@ -40,7 +47,7 @@
       "name": "ci-mac-custom-param",
       "inherits": "ci-mac",
       "cacheVariables": {
-        "DEB_BUILD_WITH_OMP": "OFF"
+        "DEB_PARAMETER_JSON": "${sourceDir}/prebuild/DebCustomParamPreset.json"
       }
     },
     {
@@ -82,12 +89,18 @@
       "jobs": 4
     },
     {
+      "name": "ci-mac",
+      "configurePreset": "ci-mac",
+      "configuration": "release",
+      "jobs": 4
+    },
+    {
       "name": "ci-custom-param",
       "configurePreset": "ci-custom-param",
       "configuration": "release",
       "jobs": 4
     },
-        {
+    {
       "name": "ci-mac-custom-param",
       "configurePreset": "ci-mac-custom-param",
       "configuration": "release",
