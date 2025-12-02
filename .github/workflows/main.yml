@@ -89,6 +89,6 @@ jobs:
     - name: Test Custom Params
       run: |
         rm -rf build/CMakeCache.txt
-        cmake --preset ci-custom-param
-        cmake --build --preset ci-custom-param
+        cmake --preset ${{ matrix.preset }}-custom-param
+        cmake --build --preset ${{ matrix.preset }}-custom-param
         ctest --preset all-test --output-on-failure
