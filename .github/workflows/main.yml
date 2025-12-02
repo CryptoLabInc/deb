@@ -1,0 +1,98 @@
+# ~~~
+# Copyright 2025 CryptoLab, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ~~~
+
+name: main
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        # Include previous commit
+        fetch-depth: 2
+    #- name: Create conda env
+    #  if: ${{ inputs.conda_env_name != '' }}
+    #  uses: conda-incubator/setup-miniconda@v3
+    #  with:
+    #    miniforge-version: "latest"
+    #    auto-activate-base: "false"
+    #    remove-profiles: true
+    #    clean-patched-environment-file: true
+    #    activate-environment: ${{ inputs.conda_env_name }}
+
+    - name: Select target SHA to compare and fetch if required
+      run: |
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          TARGET_SHA=${{ github.event.pull_request.base.sha }}
+          # Additionally, as checkout action does not fetch the target PR, we do.
+          git fetch --no-tags --prune --depth=1 origin $TARGET_SHA
+        else
+          TARGET_SHA=$( git rev-parse HEAD^ )
+        fi
+        echo "TARGET_SHA=$TARGET_SHA" >> $GITHUB_ENV
+
+    #- name: Install required conda packages
+    #  if: ${{ inputs.conda_env_name != '' && inputs.required_packages != '' }}
+    #  shell: bash -l {0}
+    #  run: conda install -c conda-forge -y pre-commit ${{ inputs.required_packages }}
+
+    - name: Generate compile commands
+      shell: bash -l {0}
+      run: cmake --preset clang-ci
+
+    - name: Build for generated headers
+      shell: bash -l {0}
+      run: cmake --build --preset clang-ci
+
+    - name: Run pre-commit for commit and push stages.
+      shell: bash -l {0}
+      run: pre-commit install && pre-commit run -s $TARGET_SHA -o HEAD --hook-stage commit --hook-stage push
+
+  build-and-test:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Configure CMake
+      run: cmake --preset ci
+
+    - name: Build
+      run: cmake --build --preset ci
+
+    - name: Test operations
+      run: ctest --preset all-test --output-on-failure
+
+    - name: Test Custom Params
+      run: |
+        rm -rf build/CMakeCache.txt
+        cmake --preset ci-custom-param
+        cmake --build --preset ci-custom-param
+        ctest --preset all-test --output-on-failure
