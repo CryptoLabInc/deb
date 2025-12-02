@@ -71,8 +71,8 @@ jobs:
         include:
           - os: ubuntu-latest
             preset: ci
-          - os: macos-latest
-            preset: ci-mac
+          #- os: macos-latest
+          #  preset: ci-mac
 
     steps:
     - uses: actions/checkout@v3

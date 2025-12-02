@@ -56,6 +56,7 @@ public:
     std::random_device rd;
     std::mt19937 gen{rd()};
     std::uniform_real_distribution<double> dist{-1.0, 1.0};
+    std::uniform_int_distribution<uint64_t> dist_u64{0, UINT64_MAX};
     // Adjusted error tolerances based on bitwidth of the first prime
     // 60 bit prime -> sk_err = 2^-28, enc_err = 2^-15
     // 50 bit prime -> sk_err = 2^-26.3, enc_err = 2^-13.3

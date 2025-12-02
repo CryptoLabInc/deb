@@ -84,7 +84,7 @@ TEST_P(KeyGen, GenConjugationKey) {
 
 TEST_P(KeyGen, GenRotationKeys) {
     const Size num_slots = context->get_num_slots();
-    const Size rot = rand() % (num_slots - 1) + 1;
+    const Size rot = dist_u64(gen) % (num_slots - 1) + 1;
     const RNGSeed seed = SeedGenerator::Gen();
 
     KeyGenerator keygen_same1(sk, seed);
@@ -118,7 +118,7 @@ TEST_P(KeyGen, GenRotationKeys) {
 }
 
 TEST_P(KeyGen, GenAutomorphismKey) {
-    const Size sig = rand() % (degree - 1) + 1;
+    const Size sig = dist_u64(gen) % (degree - 1) + 1;
     SwitchKey autokey(context, SwitchKeyKind::SWK_AUTO);
     ASSERT_NO_THROW(autokey = keygen.genAutoKey(sig));
     ASSERT_NO_THROW(keygen.genAutoKeyInplace(sig, autokey));
@@ -141,7 +141,8 @@ TEST_P(KeyGen, GenModPackKeySelf) {
         GTEST_SKIP()
             << "MODPACK_SELF key generation is only for single secret.";
     }
-    const Size pad_rank = 1U << (rand() % (context->get_log_degree() / 2));
+    const Size pad_rank = 1U
+                          << (dist_u64(gen) % (context->get_log_degree() / 2));
     SwitchKey modevikey(context, SwitchKeyKind::SWK_MODPACK_SELF);
     ASSERT_NO_THROW(modevikey = keygen.genModPackKeyBundle(pad_rank));
     ASSERT_NO_THROW(keygen.genModPackKeyBundleInplace(pad_rank, modevikey));

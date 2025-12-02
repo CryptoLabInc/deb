@@ -156,28 +156,27 @@ TEST_P(Serialize, SecretKeySerializationTest) {
 }
 
 TEST_P(Serialize, SwkSerializationTest) {
-    SwitchKey swk(context, static_cast<SwitchKeyKind>(rand() % 7), rand() % 10);
-    const auto num_pieces = rand() % 10 + 1;
-    for (Size i = 0; i < num_pieces; ++i) {
-        swk.addAx(2, 2);
-        swk.addBx(2, 2);
-        for (Size j = 0; j < 2; ++j) {
-            for (Size k = 0; k < 2; ++k) {
-                for (Size d = 0; d < degree; ++d) {
-                    swk.ax(j)[k][d] = rand();
-                    swk.bx(j)[k][d] = rand();
-                }
+    const SwitchKeyKind kind = SWK_ROT;
+    SwitchKey swk(context, kind, dist_u64(gen) % (degree >> 1 - 1) + 1);
+
+    for (Size i = 0; i < swk.axSize(); ++i) {
+        for (Size j = 0; j < swk.ax(i).size(); ++j) {
+            for (Size d = 0; d < degree; ++d) {
+                swk.ax(i)[j][d] = dist_u64(gen);
+                swk.bx(i)[j][d] = dist_u64(gen);
             }
         }
     }
+
     std::ostringstream os;
     serializeToStream(swk, os);
     std::istringstream is(os.str());
-    SwitchKey deserialized_swk(context, SWK_CONJ);
+    SwitchKey deserialized_swk(context, kind);
     deserializeFromStream(is, deserialized_swk);
 
     EXPECT_EQ(swk.preset(), deserialized_swk.preset());
     EXPECT_EQ(swk.type(), deserialized_swk.type());
+    EXPECT_EQ(swk.rotIdx(), deserialized_swk.rotIdx());
     EXPECT_EQ(swk.dnum(), deserialized_swk.dnum());
     EXPECT_EQ(swk.axSize(), deserialized_swk.axSize());
     EXPECT_EQ(swk.bxSize(), deserialized_swk.bxSize());

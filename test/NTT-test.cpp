@@ -17,6 +17,7 @@
 #include "utils/Basic.hpp"
 #include "utils/NTT.hpp"
 
+#include <random>
 #include <vector>
 
 #include <gtest/gtest.h>
@@ -24,26 +25,24 @@
 using namespace deb;
 using namespace std;
 
-namespace {
-void getRandomU64RangeIter(Size range, u64 *begin, const u64 *end) {
-    for (u64 *it = begin; it != end; ++it) {
-        *it = static_cast<u64>(rand()) % range;
-    }
-}
-} // namespace
-
 class NttTest : public ::testing::TestWithParam<std::tuple<u64, u64>> {
 public:
     const u64 degree{get<0>(GetParam())};
     const u64 prime{get<1>(GetParam())};
 
-    auto getRandomVector(Size size = 0) const {
+    std::random_device rd;
+    std::mt19937 gen{rd()};
+    std::uniform_int_distribution<u64> dist{0, UINT64_MAX};
+
+    inline auto getRandomVector(Size size = 0) {
         if (size == 0)
             size = degree;
         // std::vector<u64> v(size);
         auto *v = static_cast<u64 *>(
             ::operator new[](sizeof(u64) * size, std::align_val_t(256)));
-        getRandomU64RangeIter(prime, v, v + size);
+        for (u64 *it = v; it != v + size; ++it) {
+            *it = dist(gen) % prime;
+        }
         return v;
     }
 };
