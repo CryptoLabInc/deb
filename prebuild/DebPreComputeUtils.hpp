@@ -548,6 +548,8 @@ static void write_header(const std::string &out_path,
     };
     FinalPreset empty_preset;
     empty_preset.NAME = empty_preset.PARENT = "EMPTY";
+    empty_preset.PRIMES = {2};
+    empty_preset.SCALE_FACTORS = {1};
     std::vector<FinalPreset> finals_copy = finals;
     finals_copy.push_back(std::move(empty_preset));
     for (const auto &p : finals_copy) {

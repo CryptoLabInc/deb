@@ -102,7 +102,9 @@ add_dependencies(${PROJECT_NAME}_obj generate_flatbuffers
 set_my_project_warnings(${PROJECT_NAME}_obj)
 set_property(TARGET ${PROJECT_NAME}_obj PROPERTY POSITION_INDEPENDENT_CODE ON)
 
-target_compile_options(${PROJECT_NAME}_obj PUBLIC -Wno-pedantic)
+if(NOT MSVC)
+  target_compile_options(${PROJECT_NAME}_obj PRIVATE -Wno-pedantic)
+endif()
 
 target_link_libraries(
   ${PROJECT_NAME}_obj PRIVATE $<BUILD_INTERFACE:alea>

@@ -1,0 +1,94 @@
+# ~~~
+# Copyright 2025 CryptoLab, Inc.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ~~~
+
+name: main
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+concurrency:
+  group: ${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  pre-commit:
+    runs-on: ubuntu-latest
+    steps:
+    - name: Install pre-commit
+      run: |
+        pip install --upgrade pip
+        pip install pre-commit
+
+    - uses: actions/checkout@v4
+      with:
+        # Include previous commit
+        fetch-depth: 2
+
+    - name: Select target SHA to compare and fetch if required
+      run: |
+        if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+          TARGET_SHA=${{ github.event.pull_request.base.sha }}
+          # Additionally, as checkout action does not fetch the target PR, we do.
+          git fetch --no-tags --prune --depth=1 origin $TARGET_SHA
+        else
+          TARGET_SHA=$( git rev-parse HEAD^ )
+        fi
+        echo "TARGET_SHA=$TARGET_SHA" >> $GITHUB_ENV
+
+    - name: Generate compile commands
+      shell: bash -l {0}
+      run: cmake --preset ci
+
+    - name: Build for generated headers
+      shell: bash -l {0}
+      run: cmake --build --preset ci
+
+    - name: Run pre-commit for commit and push stages.
+      shell: bash -l {0}
+      run: pre-commit install && pre-commit run -s $TARGET_SHA -o HEAD --hook-stage commit --hook-stage push
+
+  build-and-test:
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            preset: ci
+          - os: macos-latest
+            preset: ci-mac
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Configure CMake
+      run: cmake --preset ${{ matrix.preset }}
+
+    - name: Build
+      run: cmake --build --preset ${{ matrix.preset }}
+
+    - name: Test operations
+      run: ctest --preset all-test --output-on-failure
+
+    - name: Test Custom Params
+      run: |
+        rm -rf build/CMakeCache.txt
+        cmake --preset ${{ matrix.preset }}-custom-param
+        cmake --build --preset ${{ matrix.preset }}-custom-param
+        ctest --preset all-test --output-on-failure

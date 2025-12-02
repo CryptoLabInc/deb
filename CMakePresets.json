@@ -20,6 +20,48 @@
       }
     },
     {
+      "name": "ci",
+      "inherits": "release",
+      "installDir": "${sourceDir}/build/install",
+      "cacheVariables": {
+        "DEB_BUILD_TEST": "ON",
+        "DEB_BUILD_BENCHMARK": "ON",
+        "DEB_BUILD_WITH_OMP": "ON"
+      }
+    },
+    {
+      "name": "ci-mac",
+      "inherits": "ci",
+      "cacheVariables": {
+        "DEB_BUILD_WITH_OMP": "OFF"
+      }
+    },
+    {
+      "name": "ci-custom-param",
+      "inherits": "ci",
+      "cacheVariables": {
+        "DEB_PARAMETER_JSON": "${sourceDir}/prebuild/DebCustomParamPreset.json"
+      }
+    },
+    {
+      "name": "ci-mac-custom-param",
+      "inherits": "ci-mac",
+      "cacheVariables": {
+        "DEB_PARAMETER_JSON": "${sourceDir}/prebuild/DebCustomParamPreset.json"
+      }
+    },
+    {
+      "name": "clang-ci",
+      "inherits": "ci",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "clang++",
+        "CMAKE_C_COMPILER": "clang",
+        "DEB_BUILD_TEST": "ON",
+        "DEB_BUILD_BENCHMARK": "ON",
+        "DEB_BUILD_WITH_OMP": "ON"
+      }
+    },
+    {
       "name": "benchmark",
       "inherits": "release",
       "cacheVariables": {
@@ -39,6 +81,36 @@
       "name": "release",
       "configurePreset": "release",
       "configuration": "release"
+    },
+    {
+      "name": "ci",
+      "configurePreset": "ci",
+      "configuration": "release",
+      "jobs": 4
+    },
+    {
+      "name": "ci-mac",
+      "configurePreset": "ci-mac",
+      "configuration": "release",
+      "jobs": 4
+    },
+    {
+      "name": "ci-custom-param",
+      "configurePreset": "ci-custom-param",
+      "configuration": "release",
+      "jobs": 4
+    },
+    {
+      "name": "ci-mac-custom-param",
+      "configurePreset": "ci-mac-custom-param",
+      "configuration": "release",
+      "jobs": 4
+    },
+    {
+      "name": "clang-ci",
+      "configurePreset": "clang-ci",
+      "configuration": "release",
+      "jobs": 4
     }
   ],
   "testPresets": [
@@ -58,7 +130,7 @@
     {
       "name": "all-test",
       "inherits": "test-base",
-      "configurePreset": "release",
+      "configurePreset": "ci",
       "configuration": "release"
     }
   ]
