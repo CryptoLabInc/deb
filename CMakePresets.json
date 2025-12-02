@@ -30,6 +30,13 @@
       }
     },
     {
+      "name": "ci-mac",
+      "inherits": "ci",
+      "cacheVariables": {
+        "DEB_BUILD_WITH_OMP": "OFF"
+      }
+    },
+    {
       "name": "ci-custom-param",
       "inherits": "ci",
       "cacheVariables": {
