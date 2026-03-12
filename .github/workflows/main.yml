@@ -74,7 +74,7 @@ jobs:
           - os: macos-latest
             preset: ci-mac
           - os: windows-latest
-            preset: ci-windows
+            preset: ci-win
 
     steps:
     - uses: actions/checkout@v3
@@ -89,7 +89,7 @@ jobs:
       run: ctest --preset all-test --output-on-failure
 
     - name: Test Custom Params
-      if: matrix.preset != 'ci-windows'
+      if: matrix.preset != 'ci-win'
       run: |
         rm -rf build/CMakeCache.txt
         cmake --preset ${{ matrix.preset }}-custom-param
