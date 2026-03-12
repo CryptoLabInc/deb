@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -22,22 +22,19 @@
 
 namespace deb {
 
-const u8 *to_alea_seed(const RNGSeed &seed) {
-    return reinterpret_cast<const u8 *>(seed.data());
-}
-
 SeedGenerator &SeedGenerator::GetInstance(std::optional<const RNGSeed> seeds) {
     static SeedGenerator instance(seeds);
     return instance;
 }
 void SeedGenerator::Reseed(const std::optional<const RNGSeed> &seeds) {
-    alea_reseed(GetInstance().as_.get(), to_alea_seed(seeds.value()));
+    const auto &s = seeds.value();
+    GetInstance().rng_->reseed(reinterpret_cast<const u8 *>(s.data()),
+                               DEB_RNG_SEED_BYTE_SIZE);
 }
 
 RNGSeed SeedGenerator::Gen() { return GetInstance().genSeed(); }
 
-SeedGenerator::SeedGenerator(std::optional<const RNGSeed> seeds)
-    : as_(nullptr, &alea_free) {
+SeedGenerator::SeedGenerator(std::optional<const RNGSeed> seeds) {
     if (!seeds) {
         std::random_device rd;
         RNGSeed nseeds;
@@ -49,14 +46,12 @@ SeedGenerator::SeedGenerator(std::optional<const RNGSeed> seeds)
         }
         seeds.emplace(nseeds);
     }
-    alea_state *p = alea_init(reinterpret_cast<const u8 *>(seeds->data()),
-                              ALEA_ALGORITHM_SHAKE256);
-    as_ = std::unique_ptr<alea_state, decltype(&alea_free)>(p, &alea_free);
+    rng_ = createRandomGenerator(seeds.value());
 }
 
 RNGSeed SeedGenerator::genSeed() {
     RNGSeed seeds;
-    alea_get_random_uint64_array(as_.get(), seeds.data(), DEB_U64_SEED_SIZE);
+    rng_->getRandomUint64Array(seeds.data(), DEB_U64_SEED_SIZE);
     return seeds;
 }
 

@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,8 +17,8 @@
 #pragma once
 
 #include "CKKSTypes.hpp"
-#include "Macro.hpp"
 #include "utils/Basic.hpp"
+#include "utils/Macro.hpp"
 #include "utils/NTT.hpp"
 
 #include <algorithm>
@@ -26,10 +26,23 @@
 
 namespace deb::utils {
 
+template <Size D> struct DegreeTrait {
+    static constexpr Size degree = D;
+    DegreeTrait() = default;
+    DegreeTrait(Size) {}
+};
+template <> struct DegreeTrait<1> {
+    Size degree;
+    DegreeTrait() = default;
+    DegreeTrait(Size deg) : degree(deg) {}
+};
+
 /**
  * @brief Provides modular arithmetic utilities bound to a specific modulus.
  */
-class ModArith {
+template <Size D = 1> class ModArith : public DegreeTrait<D> {
+    using DegreeTrait<D>::degree;
+
 public:
     explicit ModArith() = default;
     /**
@@ -37,7 +50,8 @@ public:
      * @param size Default vector size (poly degree).
      * @param prime Prime modulus.
      */
-    explicit ModArith(Size size, u64 prime);
+    explicit ModArith(u64 prime);
+    explicit ModArith(Size degree, u64 prime);
 
     /**
      * @brief Returns the modulus associated with this instance.
@@ -252,7 +266,8 @@ private:
  * @param num_polyunit Optional cap on processed units (0 = all).
  * @param expected_ntt_state Hint used to avoid redundant transforms.
  */
-void forwardNTT(const std::vector<ModArith> &modarith, Polynomial &poly,
+template <Size D>
+void forwardNTT(const std::vector<ModArith<D>> &modarith, Polynomial &poly,
                 Size num_polyunit = 0,
                 [[maybe_unused]] bool expected_ntt_state = false);
 
@@ -263,7 +278,8 @@ void forwardNTT(const std::vector<ModArith> &modarith, Polynomial &poly,
  * @param num_polyunit Optional cap on processed units.
  * @param expected_ntt_state Hint used to avoid redundant transforms.
  */
-void backwardNTT(const std::vector<ModArith> &modarith, Polynomial &poly,
+template <Size D>
+void backwardNTT(const std::vector<ModArith<D>> &modarith, Polynomial &poly,
                  Size num_polyunit = 0,
                  [[maybe_unused]] bool expected_ntt_state = true);
 
@@ -275,8 +291,13 @@ void backwardNTT(const std::vector<ModArith> &modarith, Polynomial &poly,
  * @param res Result polynomial.
  * @param num_polyunit Optional cap on processed units.
  */
-void addPoly(const std::vector<ModArith> &modarith, const Polynomial &op1,
+template <Size D>
+void addPoly(const std::vector<ModArith<D>> &modarith, const Polynomial &op1,
              const Polynomial &op2, Polynomial &res, Size num_polyunit = 0);
+template <Size D>
+void addPolyConst(const std::vector<ModArith<D>> &modarith,
+                  const Polynomial &op1, const Polynomial &op2, Polynomial &res,
+                  Size num_polyunit = 0);
 /**
  * @brief Subtracts @p op2 from @p op1 coefficient-wise.
  * @param modarith Per-prime helpers.
@@ -285,7 +306,8 @@ void addPoly(const std::vector<ModArith> &modarith, const Polynomial &op1,
  * @param res Result polynomial.
  * @param num_polyunit Optional cap on processed units.
  */
-void subPoly(const std::vector<ModArith> &modarith, const Polynomial &op1,
+template <Size D>
+void subPoly(const std::vector<ModArith<D>> &modarith, const Polynomial &op1,
              const Polynomial &op2, Polynomial &res, Size num_polyunit = 0);
 /**
  * @brief Multiplies two polynomials in the NTT domain.
@@ -295,8 +317,13 @@ void subPoly(const std::vector<ModArith> &modarith, const Polynomial &op1,
  * @param res Result polynomial.
  * @param num_polyunit Optional cap on processed units.
  */
-void mulPoly(const std::vector<ModArith> &modarith, const Polynomial &op1,
+template <Size D>
+void mulPoly(const std::vector<ModArith<D>> &modarith, const Polynomial &op1,
              const Polynomial &op2, Polynomial &res, Size num_polyunit = 0);
+template <Size D>
+void mulPolyConst(const std::vector<ModArith<D>> &modarith,
+                  const Polynomial &op1, const Polynomial &op2, Polynomial &res,
+                  Size num_polyunit = 0);
 /**
  * @brief Multiplies a polynomial by a scalar vector within index range.
  * @param modarith Per-prime helpers.
@@ -306,7 +333,37 @@ void mulPoly(const std::vector<ModArith> &modarith, const Polynomial &op1,
  * @param s_id Start index.
  * @param e_id End index (exclusive).
  */
-void constMulPoly(const std::vector<ModArith> &modarith, const Polynomial &op1,
-                  const u64 *op2, Polynomial &res, Size s_id, Size e_id);
+template <Size D>
+void constMulPoly(const std::vector<ModArith<D>> &modarith,
+                  const Polynomial &op1, const u64 *op2, Polynomial &res,
+                  Size s_id, Size e_id);
 
+#define DECL_MODARITH_HELPER(degree, prefix)                                   \
+    prefix template class ModArith<degree>;                                    \
+    prefix template void forwardNTT(const std::vector<ModArith<degree>> &,     \
+                                    Polynomial &, Size, bool);                 \
+    prefix template void backwardNTT(const std::vector<ModArith<degree>> &,    \
+                                     Polynomial &, Size, bool);                \
+    prefix template void addPoly(const std::vector<ModArith<degree>> &,        \
+                                 const Polynomial &, const Polynomial &,       \
+                                 Polynomial &, Size);                          \
+    prefix template void addPolyConst(const std::vector<ModArith<degree>> &,   \
+                                      const Polynomial &, const Polynomial &,  \
+                                      Polynomial &, Size);                     \
+    prefix template void subPoly(const std::vector<ModArith<degree>> &,        \
+                                 const Polynomial &, const Polynomial &,       \
+                                 Polynomial &, Size);                          \
+    prefix template void mulPoly(const std::vector<ModArith<degree>> &,        \
+                                 const Polynomial &, const Polynomial &,       \
+                                 Polynomial &, Size);                          \
+    prefix template void mulPolyConst(const std::vector<ModArith<degree>> &,   \
+                                      const Polynomial &, const Polynomial &,  \
+                                      Polynomial &, Size);                     \
+    prefix template void constMulPoly(const std::vector<ModArith<degree>> &,   \
+                                      const Polynomial &, const u64 *,         \
+                                      Polynomial &, Size, Size);
+
+#define D(degree) DECL_MODARITH_HELPER(degree, extern)
+DEGREE_SET
+#undef D
 } // namespace deb::utils

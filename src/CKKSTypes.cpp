@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,12 +15,11 @@
  */
 
 #include "CKKSTypes.hpp"
-
 namespace deb {
 
-// ---------------------------------------------------------------------
-// Implementation of Message
-// ---------------------------------------------------------------------
+//// ---------------------------------------------------------------------
+//// Implementation of Message
+//// ---------------------------------------------------------------------
 template <EncodingType EncodeT, typename DataT>
 MessageBase<EncodeT, DataT>::MessageBase(const Size size) : data_(size) {}
 template <EncodingType EncodeT, typename DataT>
@@ -58,103 +57,156 @@ MESSAGE_TYPE_TEMPLATE()
 // ---------------------------------------------------------------------
 // Implementation of PolyUnit
 // ---------------------------------------------------------------------
-PolyUnit::PolyUnit(const Preset preset, const Size level)
-    : PolyUnit(getContext(preset), level) {}
-
-PolyUnit::PolyUnit(const Context &context, const Size level)
-    : prime_(context->get_primes()[level]), ntt_state_(false) {
+PolyUnit::PolyUnit(const Preset preset, const Size level, const bool alloc)
+    : prime_(get_primes(preset)[level]), ntt_state_(false),
+      degree_(get_degree(preset)) {
+    if (!alloc) {
+        data_ptr_ = nullptr;
+        degree_ = 0;
+        return;
+    }
 #if DEB_ALINAS_LEN == 0
-    data_ = std::shared_ptr<span<u64>>(
-        new span<u64>(new u64[context->get_degree()], context->get_degree()),
-        [](span<u64> *p) {
-            delete[] p->data();
-            delete p;
-        });
+    data_ptr_ =
+        std::shared_ptr<u64[]>(new u64[degree_], std::default_delete<u64[]>());
 #else
     auto *buf = static_cast<u64 *>(::operator new[](
-        sizeof(u64) * context->get_degree(), std::align_val_t(DEB_ALINAS_LEN)));
-    data_ = std::shared_ptr<span<u64>>(
-        new span<u64>(buf, context->get_degree()), [](span<u64> *p) {
-            ::operator delete[](p->data(), std::align_val_t(DEB_ALINAS_LEN));
-            delete p;
-        });
+        sizeof(u64) * degree_, std::align_val_t(DEB_ALINAS_LEN)));
+    data_ptr_ = std::shared_ptr<u64[]>(buf, [](u64 *p) {
+        ::operator delete[](p, std::align_val_t(DEB_ALINAS_LEN));
+    });
 #endif
 }
-PolyUnit::PolyUnit(u64 prime, Size degree) : prime_(prime), ntt_state_(false) {
+PolyUnit::PolyUnit(u64 prime, Size degree, const bool alloc)
+    : prime_(prime), ntt_state_(false), degree_(degree) {
+    if (!alloc) {
+        data_ptr_ = nullptr;
+        degree_ = 0;
+        return;
+    }
 #if DEB_ALINAS_LEN == 0
-    data_ = std::shared_ptr<span<u64>>(new span<u64>(new u64[degree], degree),
-                                       [](span<u64> *p) {
-                                           delete[] p->data();
-                                           delete p;
-                                       });
+    data_ptr_ =
+        std::shared_ptr<u64[]>(new u64[degree_], std::default_delete<u64[]>());
 #else
     auto *buf = static_cast<u64 *>(::operator new[](
-        sizeof(u64) * degree, std::align_val_t(DEB_ALINAS_LEN)));
-    data_ = std::shared_ptr<span<u64>>(
-        new span<u64>(buf, degree), [](span<u64> *p) {
-            ::operator delete[](p->data(), std::align_val_t(DEB_ALINAS_LEN));
-            delete p;
-        });
+        sizeof(u64) * degree_, std::align_val_t(DEB_ALINAS_LEN)));
+    data_ptr_ = std::shared_ptr<u64[]>(buf, [](u64 *p) {
+        ::operator delete[](p, std::align_val_t(DEB_ALINAS_LEN));
+    });
 #endif
 }
 
 PolyUnit PolyUnit::deepCopy() const {
-    PolyUnit copy(prime_, degree());
-    for (Size i = 0; i < degree(); ++i) {
-        copy[i] = (*this)[i];
+    const bool alloc = data_ptr_ != nullptr && degree_ != 0;
+    PolyUnit copy(prime_, degree_, alloc);
+    if (alloc) {
+        for (Size i = 0; i < degree_; ++i) {
+            copy[i] = (*this)[i];
+        }
     }
     copy.setNTT(ntt_state_);
     return copy;
 }
+
 void PolyUnit::setPrime(u64 prime) noexcept { prime_ = prime; }
 u64 PolyUnit::prime() const noexcept { return prime_; }
 void PolyUnit::setNTT(bool ntt_state) noexcept { ntt_state_ = ntt_state; }
 bool PolyUnit::isNTT() const noexcept { return ntt_state_; }
-Size PolyUnit::degree() const noexcept {
-    return static_cast<Size>(data_->size());
-}
-u64 &PolyUnit::operator[](Size index) noexcept { return (*data_)[index]; }
-u64 PolyUnit::operator[](Size index) const noexcept { return (*data_)[index]; }
-u64 *PolyUnit::data() const noexcept { return data_->data(); }
+Size PolyUnit::degree() const noexcept { return degree_; }
 
 void PolyUnit::setData(u64 *new_data, Size size) {
-    data_ = std::shared_ptr<span<u64>>(new span<u64>(new_data, size),
-                                       [](span<u64> *p) { delete p; });
+    data_ptr_ = std::shared_ptr<u64[]>(new_data, [](u64 *p) {
+        // do nothing, external data
+    });
+    degree_ = size;
 }
 
 // ---------------------------------------------------------------------
 // Implementation of Polynomial
 // ---------------------------------------------------------------------
-Polynomial::Polynomial(const Preset preset, const bool full_level)
-    : Polynomial(getContext(preset), full_level) {}
-Polynomial::Polynomial(Context context, const bool full_level) {
-    Size num_poly =
-        full_level ? context->get_num_p() : context->get_encryption_level() + 1;
+Polynomial::Polynomial(const Preset preset, const bool full_level) {
+    const Size degree = get_degree(preset);
+    const Size num_poly =
+        full_level ? get_num_p(preset) : get_encryption_level(preset) + 1;
+#if DEB_ALINAS_LEN == 0
+    dealloc_ptr_ = std::shared_ptr<u64[]>(new u64[num_poly * degree],
+                                          std::default_delete<u64[]>());
+#else
+    auto *buf = static_cast<u64 *>(::operator new[](
+        sizeof(u64) * num_poly * degree, std::align_val_t(DEB_ALINAS_LEN)));
+    dealloc_ptr_ = std::shared_ptr<u64[]>(buf, [buf](u64 *p) {
+        ::operator delete[](buf, std::align_val_t(DEB_ALINAS_LEN));
+    });
+#endif
     for (Size l = 0; l < num_poly; ++l) {
-        data_.emplace_back(context, l);
+        polyunits_.emplace_back(preset, l, false);
+        polyunits_[l].setData(dealloc_ptr_.get() + l * degree, degree);
     }
 }
-Polynomial::Polynomial(Context context, const Size custom_size) {
+Polynomial::Polynomial(const Preset preset, const Size custom_size) {
+    const Size degree = get_degree(preset);
+#if DEB_ALINAS_LEN == 0
+    dealloc_ptr_ = std::shared_ptr<u64[]>(new u64[custom_size * degree],
+                                          std::default_delete<u64[]>());
+#else
+    auto *buf = static_cast<u64 *>(::operator new[](
+        sizeof(u64) * custom_size * degree, std::align_val_t(DEB_ALINAS_LEN)));
+    dealloc_ptr_ = std::shared_ptr<u64[]>(buf, [buf](u64 *p) {
+        ::operator delete[](buf, std::align_val_t(DEB_ALINAS_LEN));
+    });
+#endif
     for (Size l = 0; l < custom_size; ++l) {
-        data_.emplace_back(context, l);
+        polyunits_.emplace_back(preset, l, false);
+        polyunits_[l].setData(dealloc_ptr_.get() + l * degree, degree);
     }
 }
 Polynomial::Polynomial(const Polynomial &other, Size others_idx,
                        Size custom_size)
-    : data_(&other.data_[others_idx], &other.data_[others_idx] + custom_size) {}
+    : polyunits_(&other.polyunits_[others_idx],
+                 &other.polyunits_[others_idx] + custom_size),
+      dealloc_ptr_(nullptr) {}
 
 Polynomial Polynomial::deepCopy(std::optional<Size> num_polyunit) const {
     const auto num_polyunit_val = num_polyunit.value_or(this->size());
-    Polynomial copy(*this);
-    copy.data_.clear();
-    for (Size i = 0; i < num_polyunit_val; ++i) {
-        copy.data_.push_back(data_[i].deepCopy());
+    deb_assert(
+        num_polyunit_val <= this->size(),
+        "[Polynomial::deepCopy] Requested number of polyunits exceeds size.");
+    Polynomial copy(*this, 0, 0);
+    copy.polyunits_.clear();
+    if (dealloc_ptr_ != nullptr) {
+#if DEB_ALINAS_LEN == 0
+        copy.dealloc_ptr_ = std::shared_ptr<u64[]>(
+            new u64[num_polyunit_val * polyunits_[0].degree()],
+            std::default_delete<u64[]>());
+#else
+        auto *buf = static_cast<u64 *>(::operator new[](
+            sizeof(u64) * num_polyunit_val * polyunits_[0].degree(),
+            std::align_val_t(DEB_ALINAS_LEN)));
+        copy.dealloc_ptr_ = std::shared_ptr<u64[]>(buf, [buf](u64 *p) {
+            ::operator delete[](buf, std::align_val_t(DEB_ALINAS_LEN));
+        });
+#endif
+        for (Size i = 0; i < num_polyunit_val; ++i) {
+            copy.polyunits_.emplace_back(polyunits_[i].prime(),
+                                         polyunits_[i].degree(), true);
+            copy.polyunits_[i].setNTT(polyunits_[i].isNTT());
+            copy.polyunits_[i].setData(copy.dealloc_ptr_.get() +
+                                           i * polyunits_[i].degree(),
+                                       polyunits_[i].degree());
+            for (Size j = 0; j < polyunits_[i].degree(); ++j) {
+                copy.polyunits_[i][j] = polyunits_[i][j];
+            }
+        }
+    } else {
+        copy.dealloc_ptr_ = nullptr;
+        for (Size i = 0; i < num_polyunit_val; ++i) {
+            copy.polyunits_.push_back(polyunits_[i].deepCopy());
+        }
     }
     return copy;
 }
 
 void Polynomial::setNTT(bool ntt_state) noexcept {
-    for (auto &poly : data_) {
+    for (auto &poly : polyunits_) {
         poly.setNTT(ntt_state);
     }
 }
@@ -164,53 +216,41 @@ void Polynomial::setLevel(Preset preset, Size level) {
 }
 
 Size Polynomial::level() const noexcept {
-    return static_cast<Size>(data_.size()) - 1;
+    return static_cast<Size>(polyunits_.size()) - 1;
 }
 
 void Polynomial::setSize(Preset preset, Size size) {
-    const auto context = getContext(preset);
     if (size <= this->size()) {
-        data_.erase(data_.begin() + size, data_.end());
+        polyunits_.erase(polyunits_.begin() + size, polyunits_.end());
     } else {
-        const auto max_len = context->get_num_p();
+        const auto max_len = get_num_p(preset);
         for (Size l = this->size(); l < size; ++l) {
-            data_.emplace_back(context->get_primes()[l % max_len],
-                               context->get_degree());
+            polyunits_.emplace_back(get_primes(preset)[l % max_len],
+                                    get_degree(preset));
         }
     }
 }
 
 Size Polynomial::size() const noexcept {
-    return static_cast<Size>(data_.size());
+    return static_cast<Size>(polyunits_.size());
 }
-PolyUnit &Polynomial::operator[](size_t index) noexcept { return data_[index]; }
-const PolyUnit &Polynomial::operator[](size_t index) const noexcept {
-    return data_[index];
-}
-PolyUnit *Polynomial::data() noexcept { return data_.data(); }
-const PolyUnit *Polynomial::data() const noexcept { return data_.data(); }
 
 // ---------------------------------------------------------------------
 // Implementation of Ciphertext
 // ---------------------------------------------------------------------
-Ciphertext::Ciphertext(const Preset preset) : Ciphertext(getContext(preset)) {}
-Ciphertext::Ciphertext(Context context)
-    : preset_(context->get_preset()), encoding_(SLOT) {
-    const Size num_polys = context->get_rank() * context->get_num_secret() + 1;
+Ciphertext::Ciphertext(const Preset preset) : preset_(preset), encoding_(SLOT) {
+    const Size num_polys = get_rank(preset) * get_num_secret(preset) + 1;
     for (Size i = 0; i < num_polys; ++i) {
-        polys_.emplace_back(context);
+        polys_.emplace_back(preset);
     }
 }
 Ciphertext::Ciphertext(const Preset preset, const Size level,
                        std::optional<Size> num_poly)
-    : Ciphertext(getContext(preset), level, num_poly) {}
-Ciphertext::Ciphertext(Context context, const Size level,
-                       std::optional<Size> num_poly)
-    : preset_(context->get_preset()), encoding_(UNKNOWN) {
+    : preset_(preset), encoding_(UNKNOWN) {
     const auto num_polys =
-        num_poly.value_or(context->get_rank() * context->get_num_secret() + 1);
+        num_poly.value_or(get_rank(preset) * get_num_secret(preset) + 1);
     for (Size i = 0; i < num_polys; ++i) {
-        polys_.emplace_back(context, level + 1);
+        polys_.emplace_back(preset, level + 1);
     }
 }
 Ciphertext::Ciphertext(const Ciphertext &other, Size others_idx)
@@ -260,15 +300,6 @@ Size Ciphertext::numPoly() const noexcept {
     return static_cast<Size>(polys_.size());
 }
 
-Polynomial &Ciphertext::operator[](size_t index) noexcept {
-    return polys_[index];
-}
-const Polynomial &Ciphertext::operator[](size_t index) const noexcept {
-    return polys_[index];
-}
-Polynomial *Ciphertext::data() noexcept { return polys_.data(); }
-const Polynomial *Ciphertext::data() const noexcept { return polys_.data(); }
-
 // ---------------------------------------------------------------------
 // Implementation of SecretKey
 // ---------------------------------------------------------------------
@@ -276,20 +307,33 @@ SecretKey::SecretKey(Preset preset, const RNGSeed seed)
     : preset_(preset), seed_(seed) {}
 
 SecretKey::SecretKey(Preset preset, bool embedding) : preset_(preset) {
-    Context context = getContext(preset);
-    coeffs_.resize(context->get_rank() * context->get_num_secret() *
-                       context->get_degree(),
-                   0);
+    coeffs_.resize(
+        get_rank(preset) * get_num_secret(preset) * get_degree(preset), 0);
     if (embedding) {
-        const Size num_poly = context->get_rank() * context->get_num_secret();
+        const Size num_poly = get_rank(preset) * get_num_secret(preset);
         for (Size i = 0; i < num_poly; ++i) {
             polys_.emplace_back(preset, true);
         }
     }
 }
-
+SecretKey::SecretKey(SecretKey &&other) noexcept
+    : preset_(other.preset_), seed_(std::move(other.seed_)),
+      coeffs_(std::move(other.coeffs_)), polys_(std::move(other.polys_)) {
+    other.zeroize();
+}
+SecretKey &SecretKey::operator=(SecretKey &&other) noexcept {
+    if (this != &other) {
+        zeroize();
+        preset_ = other.preset_;
+        seed_ = std::move(other.seed_);
+        coeffs_ = std::move(other.coeffs_);
+        polys_ = std::move(other.polys_);
+        other.zeroize();
+    }
+    return *this;
+}
+SecretKey::~SecretKey() noexcept { zeroize(); }
 Preset SecretKey::preset() const noexcept { return preset_; }
-
 bool SecretKey::hasSeed() const noexcept { return seed_.has_value(); }
 RNGSeed SecretKey::getSeed() const noexcept { return seed_.value(); }
 void SecretKey::setSeed(const RNGSeed &seed) noexcept { seed_.emplace(seed); }
@@ -299,11 +343,9 @@ Size SecretKey::coeffsSize() const noexcept {
     return static_cast<Size>(coeffs_.size());
 }
 void SecretKey::allocCoeffs() {
-    auto context = getContext(preset_);
     coeffs_.clear();
-    coeffs_.resize(context->get_rank() * context->get_num_secret() *
-                       context->get_degree(),
-                   0);
+    coeffs_.resize(
+        get_rank(preset_) * get_num_secret(preset_) * get_degree(preset_), 0);
 }
 i8 &SecretKey::coeff(Size index) noexcept { return coeffs_[index]; }
 i8 SecretKey::coeff(Size index) const noexcept { return coeffs_[index]; }
@@ -312,50 +354,43 @@ const i8 *SecretKey::coeffs() const noexcept { return coeffs_.data(); }
 Size SecretKey::numPoly() const noexcept {
     return static_cast<Size>(polys_.size());
 }
+void SecretKey::zeroize() noexcept {
+    if (!coeffs_.empty()) {
+        deb_secure_zero(coeffs_.data(), coeffs_.size() * sizeof(i8));
+    }
+    if (seed_.has_value()) {
+        deb_secure_zero(seed_->data(), seed_->size() * sizeof(u64));
+        seed_.reset();
+    }
+    for (auto &poly : polys_) {
+        for (Size i = 0; i < poly.size(); ++i) {
+            deb_secure_zero(poly[i].data(), poly[i].degree() * sizeof(u64));
+        }
+    }
+}
+
 void SecretKey::allocPolys(std::optional<Size> num_polyunit) {
-    const auto context = getContext(preset_);
-    num_polyunit = num_polyunit.value_or(context->get_num_p());
-    const Size num_poly = context->get_rank() * context->get_num_secret();
+    num_polyunit = num_polyunit.value_or(get_num_p(preset_));
+    const Size num_poly = get_rank(preset_) * get_num_secret(preset_);
     polys_.clear();
     for (Size i = 0; i < num_poly; ++i) {
-        polys_.emplace_back(context, num_polyunit.value());
+        polys_.emplace_back(preset_, num_polyunit.value());
     }
 }
-Polynomial &SecretKey::operator[](Size index) { return polys_[index]; }
-const Polynomial &SecretKey::operator[](Size index) const {
-    return polys_[index];
-}
-Polynomial *SecretKey::data() noexcept { return polys_.data(); }
-const Polynomial *SecretKey::data() const noexcept { return polys_.data(); }
 
-// SwitchKey Implementation
+// ---------------------------------------------------------------------
+// Implementation of SwitchKey
+// ---------------------------------------------------------------------
 SwitchKey::SwitchKey(Preset preset, const SwitchKeyKind type,
                      const std::optional<Size> rot_idx)
-    : SwitchKey(getContext(preset), type, rot_idx) {}
-SwitchKey::SwitchKey(const Context &context, const SwitchKeyKind type,
-                     const std::optional<Size> rot_idx)
-    : preset_(context->get_preset()), type_(type), rot_idx_(rot_idx),
-      dnum_(context->get_gadget_rank()) {
-    switch (type_) {
-    case SWK_ENC:
-        addAx(context->get_num_p(), 1, true);
-        addBx(context->get_num_p(), context->get_num_secret(), true);
-        break;
-    case SWK_MULT:
-    case SWK_CONJ:
-    case SWK_ROT:
-    case SWK_AUTO:
-    case SWK_MODPACK:
-    case SWK_COMPOSE:
-    case SWK_DECOMPOSE:
-        addAx(context->get_num_p(), dnum_, true);
-        addBx(context->get_num_p(), dnum_ * context->get_num_secret(), true);
-        break;
-    case SWK_MODPACK_SELF:
-    case SWK_GENERIC:
-    default:
-        break;
+    : preset_(preset), type_(type), rot_idx_(rot_idx),
+      dnum_(get_gadget_rank(preset)) {
+    if (type_ == SWK_MODPACK_SELF || type_ == SWK_GENERIC) {
+        return;
     }
+    const Size size = (type_ == SWK_ENC) ? 1 : dnum_;
+    addAx(get_num_p(preset), size, true);
+    addBx(get_num_p(preset), size * get_num_secret(preset), true);
 }
 
 Preset SwitchKey::preset() const noexcept { return preset_; }
@@ -379,8 +414,7 @@ void SwitchKey::addAx(const Size num_polyunit, std::optional<Size> size,
 void SwitchKey::addAx(const Polynomial &poly) { ax_.push_back(poly); }
 void SwitchKey::addBx(const Size num_polyunit, std::optional<Size> size,
                       const bool ntt_state) {
-    const auto num_poly =
-        size.value_or(dnum_ * getContext(preset_)->get_num_secret());
+    const auto num_poly = size.value_or(dnum_ * get_num_secret(preset_));
     for (Size i = 0; i < num_poly; ++i) {
         bx_.emplace_back(preset_, num_polyunit);
     }

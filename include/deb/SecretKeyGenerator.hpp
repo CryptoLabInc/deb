@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,9 @@
 #pragma once
 
 #include "CKKSTypes.hpp"
-#include "Constant.hpp"
-#include "Context.hpp"
-#include "SeedGenerator.hpp"
+#include "utils/Constant.hpp"
 #include "utils/NTT.hpp"
-
-#include "DebFBType.h"
-#include "alea/alea.h"
-#include "alea/algorithms.h"
+#include "utils/RandomGenerator.hpp"
 
 #include <cstring>
 #include <fstream>
@@ -34,7 +29,6 @@
 
 namespace deb {
 
-// template <typename Evaluator>
 /**
  * @brief Generates secret keys and secret coefficients for CKKS presets.
  */
@@ -145,7 +139,7 @@ public:
     static void GenSecretKeyFromCoeffInplace(SecretKey &sk, const i8 *coeffs);
 
 private:
-    Preset preset_;
+    const Preset preset_;
 };
 
 /**

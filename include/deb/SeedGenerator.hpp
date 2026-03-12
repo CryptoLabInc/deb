@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,34 +16,16 @@
 
 #pragma once
 
-#include "Context.hpp"
+#include "utils/RandomGenerator.hpp"
 
-#include "alea/alea.h"
-#include "alea/algorithms.h"
-
-#include <array>
+#include <memory>
 #include <optional>
 
 namespace deb {
 
 /**
- * @brief Number of 64-bit words in a CKKS RNG seed.
- */
-constexpr size_t DEB_U64_SEED_SIZE = ALEA_SEED_SIZE_SHAKE256 / sizeof(u64);
-/**
- * @brief Deterministic seed material shared across RNG utilities.
- */
-using RNGSeed = std::array<u64, DEB_U64_SEED_SIZE>;
-
-/**
- * @brief Converts the library seed format to ALEA's byte-oriented seed.
- * @param seed Source seed material.
- * @return Pointer suitable for ALEA APIs.
- */
-const u8 *to_alea_seed(const RNGSeed &seed);
-
-/**
- * @brief Singleton wrapper over ALEA to provide deterministic RNG streams.
+ * @brief Singleton wrapper over RandomGenerator to provide deterministic RNG
+ * streams.
  */
 class SeedGenerator {
 public:
@@ -75,10 +57,10 @@ private:
     SeedGenerator(std::optional<const RNGSeed> seeds);
 
     /**
-     * @brief Internal helper that produces a new seed from the ALEA state.
+     * @brief Internal helper that produces a new seed from the RNG state.
      */
     RNGSeed genSeed();
 
-    std::unique_ptr<alea_state, decltype(&alea_free)> as_;
+    std::shared_ptr<RandomGenerator> rng_;
 };
 } // namespace deb

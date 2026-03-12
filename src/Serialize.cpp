@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,15 +15,14 @@
  */
 
 #include "Serialize.hpp"
-#include "Context.hpp"
 
 namespace deb {
 
 std::vector<deb_fb::Complex> toComplexVector(const Complex *data,
                                              const Size size) {
-    std::vector<deb_fb::Complex> complex_vec;
+    std::vector<deb_fb::Complex> complex_vec(size);
     for (Size i = 0; i < size; ++i) {
-        complex_vec.emplace_back(data[i].real(), data[i].imag());
+        complex_vec[i] = {data[i].real(), data[i].imag()};
     }
     return complex_vec;
 }
@@ -31,30 +30,28 @@ std::vector<deb_fb::Complex> toComplexVector(const Complex *data,
 std::vector<Complex>
 toDebComplexVector(const Vector<const deb_fb::Complex *> *data) {
     const Size size = data->size();
-    std::vector<Complex> Complex_vec;
+    std::vector<Complex> Complex_vec(size);
     for (Size i = 0; i < size; ++i) {
-        Complex_vec.emplace_back(data->Get(i)->real(), data->Get(i)->imag());
+        Complex_vec[i] = {data->Get(i)->real(), data->Get(i)->imag()};
     }
     return Complex_vec;
 }
 
 std::vector<deb_fb::Complex32> toComplex32Vector(const ComplexT<float> *data,
                                                  const Size size) {
-    std::vector<deb_fb::Complex32> complex_vec;
+    std::vector<deb_fb::Complex32> complex_vec(size);
     for (Size i = 0; i < size; ++i) {
-        complex_vec.emplace_back(static_cast<float>(data[i].real()),
-                                 static_cast<float>(data[i].imag()));
+        complex_vec[i] = {data[i].real(), data[i].imag()};
     }
     return complex_vec;
 }
 
-std::vector<Complex>
+std::vector<ComplexT<float>>
 toDebComplex32Vector(const Vector<const deb_fb::Complex32 *> *data) {
     const Size size = data->size();
-    std::vector<Complex> Complex_vec;
+    std::vector<ComplexT<float>> Complex_vec(size);
     for (Size i = 0; i < size; ++i) {
-        Complex_vec.emplace_back(static_cast<double>(data->Get(i)->real()),
-                                 static_cast<double>(data->Get(i)->imag()));
+        Complex_vec[i] = {data->Get(i)->real(), data->Get(i)->imag()};
     }
     return Complex_vec;
 }
@@ -68,10 +65,19 @@ serializeMessage(flatbuffers::FlatBufferBuilder &builder,
 }
 
 Message deserializeMessage(const deb_fb::Message *message) {
-    Message msg(message->size());
-    memcpy(msg.data(), toDebComplexVector(message->data()).data(),
-           message->size() * sizeof(Complex));
-    return msg;
+    return Message(toDebComplexVector(message->data()));
+}
+
+flatbuffers::Offset<deb_fb::Message32>
+serializeFMessage(flatbuffers::FlatBufferBuilder &builder,
+                  const FMessage &message) {
+    auto complex_offset = builder.CreateVectorOfStructs(
+        toComplex32Vector(message.data(), message.size()));
+    return CreateMessage32(builder, message.size(), complex_offset);
+}
+
+FMessage deserializeFMessage(const deb_fb::Message32 *message) {
+    return FMessage(toDebComplex32Vector(message->data()));
 }
 
 flatbuffers::Offset<deb_fb::Coeff>
@@ -86,6 +92,21 @@ CoeffMessage deserializeCoeff(const deb_fb::Coeff *coeff) {
     CoeffMessage coeff_t(coeff->size());
     std::memcpy(coeff_t.data(), coeff->data()->data(),
                 coeff_t.size() * sizeof(Real));
+    return coeff_t;
+}
+
+flatbuffers::Offset<deb_fb::Coeff32>
+serializeFCoeff(flatbuffers::FlatBufferBuilder &builder,
+                const FCoeffMessage &coeff) {
+    return deb_fb::CreateCoeff32(
+        builder, coeff.size(),
+        builder.CreateVector(coeff.data(), coeff.size()));
+}
+
+FCoeffMessage deserializeFCoeff(const deb_fb::Coeff32 *coeff) {
+    FCoeffMessage coeff_t(coeff->size());
+    std::memcpy(coeff_t.data(), coeff->data()->data(),
+                coeff_t.size() * sizeof(float));
     return coeff_t;
 }
 
@@ -117,7 +138,7 @@ serializePoly(flatbuffers::FlatBufferBuilder &builder, const Polynomial &poly) {
 }
 
 Polynomial deserializePoly(const Preset preset, const deb_fb::Poly *poly) {
-    Polynomial poly_t(getContext(preset), poly->size());
+    Polynomial poly_t(preset, poly->size());
     for (Size i = 0; i < poly_t.size(); ++i) {
         poly_t[i] = deserializePolyUnit(poly->rnspolys()->Get(i));
     }
@@ -139,7 +160,7 @@ serializeCipher(flatbuffers::FlatBufferBuilder &builder,
 
 Ciphertext deserializeCipher(const deb_fb::Cipher *cipher) {
     auto preset = static_cast<Preset>(cipher->preset());
-    Ciphertext cipher_t(getContext(preset), cipher->bigpolys()->Get(0)->size(),
+    Ciphertext cipher_t(preset, cipher->bigpolys()->Get(0)->size(),
                         cipher->size());
     cipher_t.setEncoding(static_cast<EncodingType>(cipher->encoding()));
     for (Size i = 0; i < cipher_t.numPoly(); ++i) {
@@ -150,7 +171,6 @@ Ciphertext deserializeCipher(const deb_fb::Cipher *cipher) {
 
 flatbuffers::Offset<deb_fb::Sk>
 serializeSk(flatbuffers::FlatBufferBuilder &builder, const SecretKey &sk) {
-    auto context = getContext(sk.preset());
     auto seed_offset =
         builder.CreateVector(sk.hasSeed() ? sk.getSeed().data() : nullptr,
                              sk.hasSeed() ? sk.getSeed().size() : 0);
@@ -188,7 +208,6 @@ SecretKey deserializeSk(const deb_fb::Sk *sk) {
 
 flatbuffers::Offset<deb_fb::Swk>
 serializeSwk(flatbuffers::FlatBufferBuilder &builder, const SwitchKey &swk) {
-    auto context = getContext(swk.preset());
     std::vector<flatbuffers::Offset<deb_fb::Poly>> ax_offsets, bx_offsets;
     ax_offsets.reserve(swk.axSize());
     bx_offsets.reserve(swk.bxSize());
@@ -207,8 +226,7 @@ serializeSwk(flatbuffers::FlatBufferBuilder &builder, const SwitchKey &swk) {
 
 SwitchKey deserializeSwk(const deb_fb::Swk *swk) {
     const auto preset = static_cast<Preset>(swk->preset());
-    SwitchKey swk_t(getContext(preset),
-                    static_cast<SwitchKeyKind>(swk->type()));
+    SwitchKey swk_t(preset, static_cast<SwitchKeyKind>(swk->type()));
     swk_t.getAx().clear();
     for (Size i = 0; i < swk->ax()->size(); ++i) {
         Polynomial tmp = deserializePoly(preset, swk->ax()->Get(i));

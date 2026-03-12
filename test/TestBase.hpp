@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,10 +17,10 @@
 #pragma once
 
 #include "CKKSTypes.hpp"
-#include "Context.hpp"
 #include "Decryptor.hpp"
 #include "Encryptor.hpp"
 #include "KeyGenerator.hpp"
+#include "Preset.hpp"
 #include "SecretKeyGenerator.hpp"
 #include "SeedGenerator.hpp"
 
@@ -33,23 +33,24 @@
 using namespace deb;
 
 #if defined(DEB_RESOURCE_CHECK) && defined(NDEBUG)
-#define DEB_ASSERT(statement) ASSERT_THROW(statement, std::runtime_error)
-#define DEB_EXPECT(statement) EXPECT_THROW(statement, std::runtime_error)
+#define DEB_TEST_ASSERT(statement) ASSERT_THROW(statement, std::runtime_error)
+#define DEB_TEST_EXPECT(statement) EXPECT_THROW(statement, std::runtime_error)
 #else
-#define DEB_ASSERT(statement) ASSERT_DEATH(statement, ".*")
-#define DEB_EXPECT(statement) EXPECT_DEATH(statement, ".*")
+#define DEB_TEST_ASSERT(statement) ASSERT_DEATH(statement, ".*")
+#define DEB_TEST_EXPECT(statement) EXPECT_DEATH(statement, ".*")
 #endif
 
 using MSGS = std::vector<Message>;
+using FMSGS = std::vector<FMessage>;
 using COEFFS = std::vector<CoeffMessage>;
+using FCOEFFS = std::vector<FCoeffMessage>;
 
 class DebTestBase : public ::testing::TestWithParam<Preset> {
 public:
     const Preset preset{GetParam()};
-    Context context{getContext(preset)};
-    const Size num_slots{context->get_num_slots()};
-    const Size degree{context->get_degree()};
-    const Size num_secret{context->get_num_secret()};
+    const Size num_slots{get_num_slots(preset)};
+    const Size degree{get_degree(preset)};
+    const Size num_secret{get_num_secret(preset)};
 
     Encryptor encryptor{preset};
     Decryptor decryptor{preset};
@@ -62,21 +63,23 @@ public:
     // 50 bit prime -> sk_err = 2^-26.3, enc_err = 2^-13.3
     // 40 bit prime -> sk_err = 2^-24.6, enc_err = 2^-11.6
     const double log_error =
-        static_cast<double>(utils::bitWidth(context->get_primes()[0])) / 6.0;
+        static_cast<double>(utils::bitWidth(get_primes(preset)[0])) / 6.0;
     const double sk_err = std::pow(2.0, -18 - log_error);
     const double enc_err = std::pow(2.0, -5 - log_error);
+    const double sk_err_f = std::pow(2.0, -18);
+    const double enc_err_f = std::pow(2.0, -10);
     void SetUp() override {
         // Initialize any necessary resources or state before each test
     }
     void TearDown() override {
         // Clean up any resources or state after each tests
     }
-    MSGS scale_message(MSGS &msg, uint32_t level) {
-        const double scale = context->get_scale_factors()[level];
+    template <typename T> T scale_message(T &msg, uint32_t level) {
+        const double scale = get_scale_factors(preset)[level];
         if (scale == 0.0) {
             const double scale =
-                std::pow(2.0, utils::bitWidth(context->get_primes()[0]) - 4);
-            MSGS scale_msg = gen_empty_message();
+                std::pow(2.0, utils::bitWidth(get_primes(preset)[0]) - 4);
+            T scale_msg = gen_empty_message<T>();
             for (Size i = 0; i < num_secret; ++i) {
                 for (Size j = 0; j < num_slots; ++j) {
                     scale_msg[i][j].real(msg[i][j].real() * scale);
@@ -88,11 +91,11 @@ public:
         return msg;
     }
     COEFFS scale_coeff(COEFFS &coeffs, uint32_t level) {
-        const double scale = context->get_scale_factors()[level];
+        const double scale = get_scale_factors(preset)[level];
         if (scale == 0.0) {
             const double scale =
-                std::pow(2.0, utils::bitWidth(context->get_primes()[0]) - 4);
-            COEFFS scale_coeffs = gen_empty_coeff();
+                std::pow(2.0, utils::bitWidth(get_primes(preset)[0]) - 4);
+            COEFFS scale_coeffs = gen_empty_coeff<COEFFS>();
             for (Size i = 0; i < num_secret; ++i) {
                 for (Size j = 0; j < degree; ++j) {
                     scale_coeffs[i][j] = coeffs[i][j] * scale;
@@ -103,53 +106,69 @@ public:
         return coeffs;
     }
     double scale_error(double err, uint32_t level) {
-        const double scale = context->get_scale_factors()[level];
+        const double scale = get_scale_factors(preset)[level];
         if (scale == 0.0) {
             const double scale =
-                std::pow(2.0, utils::bitWidth(context->get_primes()[0]) - 4);
+                std::pow(2.0, utils::bitWidth(get_primes(preset)[0]) - 4);
             return err * scale;
         }
         return err;
     }
-    MSGS gen_empty_message() {
-        MSGS msg;
+    template <typename T> T gen_empty_message() {
+        T msg;
         for (Size i = 0; i < num_secret; ++i) {
             msg.emplace_back(num_slots);
         }
         return msg;
     }
-    MSGS gen_random_message() {
-        MSGS msg;
+    template <typename T> T gen_random_message() {
+        T msg;
         for (Size i = 0; i < num_secret; ++i) {
-            Message m(num_slots);
-            for (Size j = 0; j < num_slots; ++j) {
-                m[j].real(dist(gen));
-                m[j].imag(dist(gen));
+            if constexpr (std::is_same_v<T, FMSGS>) {
+                FMessage m(num_slots);
+                for (Size j = 0; j < num_slots; ++j) {
+                    m[j].real(static_cast<float>(dist(gen)));
+                    m[j].imag(static_cast<float>(dist(gen)));
+                }
+                msg.emplace_back(std::move(m));
+            } else if constexpr (std::is_same_v<T, MSGS>) {
+                Message m(num_slots);
+                for (Size j = 0; j < num_slots; ++j) {
+                    m[j].real(dist(gen));
+                    m[j].imag(dist(gen));
+                }
+                msg.emplace_back(std::move(m));
             }
-            msg.emplace_back(std::move(m));
         }
         return msg;
     }
-    COEFFS gen_empty_coeff() {
-        COEFFS coeffs;
+    template <typename T> T gen_empty_coeff() {
+        T coeffs;
         for (Size i = 0; i < num_secret; ++i) {
             coeffs.emplace_back(degree);
         }
         return coeffs;
     }
-    COEFFS gen_random_coeff() {
-        COEFFS coeffs;
+    template <typename T> T gen_random_coeff() {
+        T coeffs;
         for (Size i = 0; i < num_secret; ++i) {
-            CoeffMessage coeff(degree);
-            for (Size j = 0; j < coeff.size(); ++j) {
-                coeff[j] = dist(gen);
+            if constexpr (std::is_same_v<T, FCOEFFS>) {
+                FCoeffMessage coeff(degree);
+                for (Size j = 0; j < coeff.size(); ++j) {
+                    coeff[j] = static_cast<float>(dist(gen));
+                }
+                coeffs.emplace_back(std::move(coeff));
+            } else if constexpr (std::is_same_v<T, COEFFS>) {
+                CoeffMessage coeff(degree);
+                for (Size j = 0; j < coeff.size(); ++j) {
+                    coeff[j] = dist(gen);
+                }
+                coeffs.emplace_back(std::move(coeff));
             }
-            coeffs.emplace_back(std::move(coeff));
         }
         return coeffs;
     }
-
-    void compare_msg(MSGS &msg1, MSGS &msg2, double tol) const {
+    template <typename T> void compare_msg(T &msg1, T &msg2, double tol) const {
         for (Size i = 0; i < num_secret; ++i) {
             for (Size j = 0; j < num_slots; ++j) {
                 ASSERT_NEAR(msg1[i][j].real(), msg2[i][j].real(), tol);
@@ -157,11 +176,32 @@ public:
             }
         }
     }
-    void compare_coeff(COEFFS &coeff1, COEFFS &coeff2, double tol) const {
+    template <typename T>
+    void compare_coeff(T &coeff1, T &coeff2, double tol) const {
         for (Size i = 0; i < num_secret; ++i) {
             for (Size j = 0; j < degree; ++j) {
                 ASSERT_NEAR(coeff1[i][j], coeff2[i][j], tol);
             }
+        }
+    }
+    template <typename T>
+    void compareArray(const T *arr1, const T *arr2, const Size size) {
+        for (Size i = 0; i < size; ++i) {
+            ASSERT_EQ(arr1[i], arr2[i]);
+        }
+    }
+
+    void comparePolyUnit(const PolyUnit &poly1, const PolyUnit &poly2) {
+        ASSERT_EQ(poly1.prime(), poly2.prime());
+        ASSERT_EQ(poly1.degree(), poly2.degree());
+        ASSERT_EQ(poly1.isNTT(), poly2.isNTT());
+        compareArray(poly1.data(), poly2.data(), poly1.degree());
+    }
+
+    void comparePoly(const Polynomial &bigpoly1, const Polynomial &bigpoly2) {
+        ASSERT_EQ(bigpoly1.size(), bigpoly2.size());
+        for (Size i = 0; i < bigpoly1.size(); ++i) {
+            comparePolyUnit(bigpoly1[i], bigpoly2[i]);
         }
     }
 };

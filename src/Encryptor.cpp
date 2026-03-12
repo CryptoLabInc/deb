@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -15,13 +15,7 @@
  */
 
 #include "Encryptor.hpp"
-#include "CKKSTypes.hpp"
-#include "SecretKeyGenerator.hpp"
-#include "utils/Basic.hpp"
-
-#include "alea/algorithms.h"
-
-#include <random>
+#include "utils/OmpUtils.hpp"
 
 #ifdef DEB_OPENMP
 #include <omp.h>
@@ -29,68 +23,102 @@
 
 namespace deb {
 
-Encryptor::Encryptor(const Preset preset, std::optional<const RNGSeed> seeds)
-    : context_(getContext(preset)),
-      ptxt_buffer_(context_,
-                   context_->get_num_p() * context_->get_num_secret()),
-      vx_buffer_(context_, true), fft_(context_->get_degree()) {
+template <Preset P>
+EncryptorT<P>::EncryptorT(std::optional<const RNGSeed> seeds)
+    : PresetTraits<P>(preset), ptxt_buffer_(preset, num_p * num_secret),
+      vx_buffer_(preset, true), ex_buffer_(preset, true), samples_(degree),
+      mask_(degree), i_samples_(degree), fft_(degree) {
+    if constexpr (P == PRESET_EMPTY) {
+        throw std::runtime_error(
+            "[Encryptor] Preset template must be specified when using this "
+            "constructor");
+    }
 
-    for (Size i = 0; i < context_->get_num_p(); ++i) {
-        modarith_.emplace_back(context_->get_degree(),
-                               context_->get_primes()[i]);
+    for (Size i = 0; i < num_p; ++i) {
+        modarith.emplace_back(primes[i]);
     }
-    for (Size i = 0; i < context_->get_num_secret() + 1; ++i) {
-        ex_buffers_.emplace_back(context_, true);
-    }
+
     if (!seeds) {
         seeds.emplace(SeedGenerator::Gen());
     }
-    as_ = std::shared_ptr<void>(
-        alea_init(to_alea_seed(seeds.value()), ALEA_ALGORITHM_SHAKE256),
-        [](void *p) { alea_free(static_cast<alea_state *>(p)); });
+    rng_ = createRandomGenerator(seeds.value());
 }
 
+template <Preset P>
+EncryptorT<P>::EncryptorT(Preset actual_preset,
+                          std::optional<const RNGSeed> seeds)
+    : PresetTraits<P>(actual_preset),
+      ptxt_buffer_(actual_preset, num_p * num_secret),
+      vx_buffer_(actual_preset, true), ex_buffer_(actual_preset, true),
+      samples_(degree), mask_(degree), i_samples_(degree), fft_(degree) {
+
+    for (Size i = 0; i < num_p; ++i) {
+        modarith.emplace_back(degree, primes[i]);
+    }
+
+    if (!seeds) {
+        seeds.emplace(SeedGenerator::Gen());
+    }
+    rng_ = createRandomGenerator(seeds.value());
+}
+
+template <Preset P>
+EncryptorT<P>::EncryptorT(Preset actual_preset,
+                          std::shared_ptr<RandomGenerator> rng)
+    : PresetTraits<P>(actual_preset),
+      ptxt_buffer_(actual_preset, num_p * num_secret),
+      vx_buffer_(actual_preset, true), ex_buffer_(actual_preset, true),
+      samples_(degree), mask_(degree), i_samples_(degree), rng_(std::move(rng)),
+      fft_(degree) {
+
+    for (Size i = 0; i < num_p; ++i) {
+        modarith.emplace_back(degree, primes[i]);
+    }
+}
+
+template <Preset P>
 template <typename MSG, typename KEY,
           std::enable_if_t<!std::is_pointer_v<std::decay_t<MSG>>, int>>
-void Encryptor::encrypt(const MSG &msg, const KEY &key, Ciphertext &ctxt,
-                        const EncryptOptions &opt) const {
-    deb_assert(context_->get_num_secret() == 1,
+void EncryptorT<P>::encrypt(const MSG &msg, const KEY &key, Ciphertext &ctxt,
+                            const EncryptOptions &opt) const {
+    deb_assert(num_secret == 1,
                "[Encryptor::encrypt] NumSecret must be 1 for a single message "
                "encryption");
     encrypt(&msg, key, ctxt, opt);
 }
 
+template <Preset P>
 template <typename MSG, typename KEY>
-void Encryptor::encrypt(const std::vector<MSG> &msg, const KEY &key,
-                        Ciphertext &ctxt, const EncryptOptions &opt) const {
-    deb_assert(msg.size() == context_->get_num_secret(),
+void EncryptorT<P>::encrypt(const std::vector<MSG> &msg, const KEY &key,
+                            Ciphertext &ctxt, const EncryptOptions &opt) const {
+    deb_assert(msg.size() == num_secret,
                "[Encryptor::encrypt] Message vector size must match NumSecret");
     encrypt(msg.data(), key, ctxt, opt);
 }
 
+template <Preset P>
 template <typename MSG, typename KEY>
-void Encryptor::encrypt(const MSG *msg, const KEY &key, Ciphertext &ctxt,
-                        const EncryptOptions &opt) const {
-    const Size single_num_polyunit = (opt.level == DEB_MAX_SIZE)
-                                         ? context_->get_encryption_level() + 1
+void EncryptorT<P>::encrypt(const MSG *msg, const KEY &key, Ciphertext &ctxt,
+                            const EncryptOptions &opt) const {
+    const Size single_num_polyunit = (opt.level == utils::DEB_MAX_SIZE)
+                                         ? encryption_level + 1
                                          : opt.level + 1;
-    const Size num_secret = context_->get_num_secret();
     const Size num_polyunit = single_num_polyunit * num_secret;
 
-    deb_assert(
-        single_num_polyunit - 1 <= context_->get_num_p(),
-        "[Encryptor::encrypt] Encryption level cannot exceed number of primes");
-    deb_assert((num_secret == 1 || context_->get_rank() == 1),
+    deb_assert(single_num_polyunit - 1 <= num_p,
+               "[Encryptor::encrypt] Encryption level cannot exceed number of "
+               "primes");
+    deb_assert((num_secret == 1 || rank == 1),
                "[Encryptor::encrypt] Rank must be 1 when NumSecret > 1"
                " or NumSecret must be 1 when Rank > 1");
 
     const int max_num_threads =
-        static_cast<int>(single_num_polyunit * (context_->get_degree() >> 10));
-    setOmpThreadLimit(max_num_threads);
+        static_cast<int>(single_num_polyunit * (degree >> 10));
+    utils::setOmpThreadLimit(max_num_threads);
 
     Polynomial ptxt(ptxt_buffer_, 0, num_polyunit);
     for (Size i = 0; i < num_polyunit; ++i) {
-        ptxt[i].setPrime(context_->get_primes()[i % single_num_polyunit]);
+        ptxt[i].setPrime(primes[i % single_num_polyunit]);
     }
 
     if (num_secret > 1) {
@@ -104,9 +132,11 @@ void Encryptor::encrypt(const MSG *msg, const KEY &key, Ciphertext &ctxt,
     }
     innerEncrypt(ptxt, key, single_num_polyunit, ctxt);
 
-    if constexpr (std::is_same_v<MSG, Message>) {
+    if constexpr (std::is_same_v<MSG, Message> ||
+                  std::is_same_v<MSG, FMessage>) {
         ctxt.setEncoding(SLOT);
-    } else if constexpr (std::is_same_v<MSG, CoeffMessage>) {
+    } else if constexpr (std::is_same_v<MSG, CoeffMessage> ||
+                         std::is_same_v<MSG, FCoeffMessage>) {
         ctxt.setEncoding(COEFF);
     } else {
         throw std::runtime_error(
@@ -115,190 +145,194 @@ void Encryptor::encrypt(const MSG *msg, const KEY &key, Ciphertext &ctxt,
 
     if (!opt.ntt_out) {
         for (u64 i = 0; i < ctxt.numPoly(); ++i) {
-            backwardNTT(modarith_, ctxt[i]);
+            backwardNTT(modarith, ctxt[i]);
         }
     }
-    unsetOmpThreadLimit();
+    utils::unsetOmpThreadLimit();
 }
 
-template <>
-void Encryptor::innerEncrypt<SecretKey>(const Polynomial &ptxt,
-                                        const SecretKey &secretkey,
-                                        Size num_polyunit,
-                                        Ciphertext &ctxt) const {
-    const Size rank = context_->get_rank();
-    const Size num_secret = context_->get_num_secret();
+template <Preset P>
+template <typename KEY>
+void EncryptorT<P>::innerEncrypt(const Polynomial &ptxt, const KEY &key,
+                                 Size num_polyunit, Ciphertext &ctxt) const {
     deb_assert(ptxt.size() >= num_polyunit * num_secret,
                "[Encryptor::innerEncrypt] Level of an input Plaintext "
                "must be greater than or equal to encryption level");
-    deb_assert(
-        secretkey.numPoly() == num_secret * rank,
-        "[Encryptor::innerEncrypt] Secret key has no embedded polynomials.");
-    deb_assert(
-        rank == 1 || num_secret == 1,
-        "[Encryptor::innerEncrypt] Rank must be 1 or NumSecret must be 1");
+    deb_assert(rank == 1 || num_secret == 1,
+               "[Encryptor::innerEncrypt] Rank must be 1 or NumSecret must be "
+               "1");
     bool isNTT = ptxt[0].isNTT();
-
     ctxt.setNumPolyunit(num_polyunit);
     ctxt.setNTT(true);
 
-    for (u64 i = 0; i < num_polyunit; ++i) {
-        alea_get_random_uint64_array_in_range(
-            as_.get(), ctxt[num_secret][i].data(), context_->get_degree(),
-            context_->get_primes()[i]);
-    }
-
-    if (rank == 1) {
-        // std::vector<Polynomial> ex_vec;
-        std::vector<Polynomial> ptxt_vec;
-        for (Size i = 0; i < num_secret; ++i) {
-            sampleGaussian(i, num_polyunit, isNTT);
-            if (i == 0)
-                ptxt_vec.push_back(ptxt);
-            else
-                ptxt_vec.emplace_back(ptxt, i * num_polyunit, num_polyunit);
+    if constexpr (std::is_same_v<KEY, SecretKey>) {
+        deb_assert(key.numPoly() == num_secret * rank,
+                   "[Encryptor::innerEncrypt] Secret key has no embedded "
+                   "polynomials.");
+        for (u64 i = 0; i < num_polyunit; ++i) {
+            rng_->getRandomUint64ArrayInRange(ctxt[num_secret][i].data(),
+                                              degree, primes[i]);
         }
 
-        PRAGMA_OMP(omp parallel) {
+        if (rank == 1) {
+            std::vector<Polynomial> ptxt_vec;
             for (Size i = 0; i < num_secret; ++i) {
+                if (i == 0)
+                    ptxt_vec.push_back(ptxt);
+                else
+                    ptxt_vec.emplace_back(ptxt, i * num_polyunit, num_polyunit);
+            }
+
+            PRAGMA_OMP(omp parallel) {
+                for (Size i = 0; i < num_secret; ++i) {
+                    sampleGaussian(num_polyunit, isNTT);
+                    // e = e + m
+                    addPoly(modarith, ex_buffer_, ptxt_vec[i], ex_buffer_,
+                            num_polyunit);
+                    // perform delayed NTT
+                    if (!isNTT) {
+                        forwardNTT(modarith, ex_buffer_, num_polyunit);
+                    }
+                    mulPolyConst(modarith, ctxt[num_secret], key[i], ctxt[i]);
+                    subPoly(modarith, ex_buffer_, ctxt[i], ctxt[i]);
+                }
+            }
+        } else {
+            Polynomial bx(ctxt[0], 0, num_polyunit);
+            Polynomial tmp(preset, num_polyunit);
+
+            PRAGMA_OMP(omp parallel) {
+                sampleGaussian(num_polyunit, isNTT);
+
                 // e = e + m
-                addPoly(modarith_, ex_buffers_[i], ptxt_vec[i], ex_buffers_[i],
-                        num_polyunit);
+                addPoly(modarith, ex_buffer_, ptxt, ex_buffer_, num_polyunit);
+
                 // perform delayed NTT
                 if (!isNTT) {
-                    forwardNTT(modarith_, ex_buffers_[i], num_polyunit);
+                    forwardNTT(modarith, ex_buffer_, num_polyunit);
                 }
-                mulPoly(modarith_, ctxt[num_secret], secretkey[i], ctxt[i]);
-                subPoly(modarith_, ex_buffers_[i], ctxt[i], ctxt[i]);
+                // TODO: not tested yet since no preset of rank > 1
+                //  b = - \sigma a_i * s_i + e + m
+                for (Size idx = 1; idx < ctxt.numPoly(); ++idx) {
+                    mulPolyConst(modarith, ctxt[idx], key[idx - 1], tmp);
+                    subPoly(modarith, bx, tmp, bx);
+                }
             }
         }
-    } else {
-        sampleGaussian(0, num_polyunit, isNTT);
-
-        // e = e + m
-        addPoly(modarith_, ex_buffers_[0], ptxt, ex_buffers_[0], num_polyunit);
-
-        // perform delayed NTT
-        if (!isNTT) {
-            forwardNTT(modarith_, ex_buffers_[0], num_polyunit);
-        }
-        // TODO: not tested yet since no preset of rank > 1
-        //  b = - \sigma a_i * s_i + e + m
-        Polynomial bx(ctxt[0], 0, num_polyunit);
-        Polynomial tmp(context_, num_polyunit);
-        for (Size idx = 1; idx < ctxt.numPoly(); ++idx) {
-            mulPoly(modarith_, ctxt[idx], secretkey[idx - 1], tmp);
-            subPoly(modarith_, bx, tmp, bx);
-        }
-    }
-}
-
-template <>
-void Encryptor::innerEncrypt<SwitchKey>(const Polynomial &ptxt,
-                                        const SwitchKey &enckey,
-                                        Size num_polyunit,
-                                        Ciphertext &ctxt) const {
-    const auto rank = context_->get_rank();
-    const auto num_secret = context_->get_num_secret();
-    deb_assert(ptxt.size() >= num_polyunit * num_secret,
-               "[Encryptor::innerEncrypt] Level of an input Plaintext "
-               "must be greater than or equal to encryption level");
-    deb_assert(
-        rank == 1 || num_secret == 1,
-        "[Encryptor::innerEncrypt] Rank must be 1 or NumSecret must be 1");
-
-    bool isNTT = ptxt[0].isNTT();
-    ctxt.setNumPolyunit(num_polyunit);
-    ctxt.setNTT(true);
-
-    sampleZO(num_polyunit);
-    sampleGaussian(num_secret, num_polyunit, true);
-    if (rank == 1) {
-        std::vector<Polynomial> ptxt_vec;
-        for (Size i = 0; i < num_secret; ++i) {
-            sampleGaussian(i, num_polyunit, isNTT);
-            if (i == 0)
-                ptxt_vec.push_back(ptxt);
-            else
-                ptxt_vec.emplace_back(ptxt, i * num_polyunit, num_polyunit);
-        }
-
-        PRAGMA_OMP(omp parallel) {
-            mulPoly(modarith_, vx_buffer_, enckey.ax(0), ctxt[num_secret],
-                    num_polyunit);
-            addPoly(modarith_, ctxt[num_secret], ex_buffers_[num_secret],
-                    ctxt[num_secret]);
+    } else if constexpr (std::is_same_v<KEY, SwitchKey>) {
+        if (rank == 1) {
+            std::vector<Polynomial> ptxt_vec;
             for (Size i = 0; i < num_secret; ++i) {
-
-                mulPoly(modarith_, vx_buffer_, enckey.bx(i), ctxt[i],
-                        num_polyunit);
-                addPoly(modarith_, ex_buffers_[i], ptxt_vec[i], ex_buffers_[i],
-                        num_polyunit);
-
-                if (!isNTT) {
-                    forwardNTT(modarith_, ex_buffers_[i], num_polyunit);
-                }
-
-                addPoly(modarith_, ctxt[i], ex_buffers_[i], ctxt[i]);
+                if (i == 0)
+                    ptxt_vec.push_back(ptxt);
+                else
+                    ptxt_vec.emplace_back(ptxt, i * num_polyunit, num_polyunit);
             }
+
+            PRAGMA_OMP(omp parallel) {
+                sampleZO(num_polyunit);
+                sampleGaussian(num_polyunit, true);
+                mulPolyConst(modarith, vx_buffer_, key.ax(0), ctxt[num_secret],
+                             num_polyunit);
+                addPoly(modarith, ctxt[num_secret], ex_buffer_,
+                        ctxt[num_secret]);
+                for (Size i = 0; i < num_secret; ++i) {
+                    sampleGaussian(num_polyunit, isNTT);
+                    mulPoly(modarith, vx_buffer_, key.bx(i), ctxt[i],
+                            num_polyunit);
+                    addPoly(modarith, ex_buffer_, ptxt_vec[i], ex_buffer_,
+                            num_polyunit);
+
+                    if (!isNTT) {
+                        forwardNTT(modarith, ex_buffer_, num_polyunit);
+                    }
+
+                    addPoly(modarith, ctxt[i], ex_buffer_, ctxt[i]);
+                }
+            }
+        } else {
+            // not implemented yet
         }
     } else {
-        // not implemented yet
+        throw std::runtime_error(
+            "[Encryptor::innerEncrypt] Unsupported key type");
     }
 }
 
+template <Preset P>
 template <typename MSG>
-void Encryptor::embeddingToN(const MSG &msg, const Real &delta,
-                             Polynomial &ptxt, const Size size) const {
+void EncryptorT<P>::embeddingToN(const MSG &msg, const Real &delta,
+                                 Polynomial &ptxt, const Size size) const {
     const auto msg_size = msg.size();
-    const auto degree = context_->get_degree();
     Size gap = degree / msg_size;
     if constexpr (std::is_same_v<MSG, Message>) {
         gap /= 2;
     }
-    std::vector<utils::i128> interim(degree);
+    std::vector<utils::i128> interim(msg_size *
+                                     ((std::is_same_v<MSG, Message>) ? 2 : 1));
 
-    PRAGMA_OMP(omp parallel for schedule(static))
-    for (Size i = 0; i < msg_size; i++) {
-        if constexpr (std::is_same_v<MSG, Message>) {
-            interim[i] = static_cast<utils::i128>(
-                utils::addZeroPointFive(msg[i].real() * delta));
-            interim[msg_size + i] = static_cast<utils::i128>(
-                utils::addZeroPointFive(msg[i].imag() * delta));
-        } else if constexpr (std::is_same_v<MSG, CoeffMessage>) {
-            interim[i] = static_cast<utils::i128>(
-                utils::addZeroPointFive(msg[i] * delta));
-        }
-    }
     for (Size i = 0; i < size; i++) {
         ptxt[i].setNTT(false);
-        if (gap > 1)
+        if (degree > msg_size * ((std::is_same_v<MSG, Message>) ? 2 : 1))
             std::fill_n(ptxt[i].data(), degree, UINT64_C(0));
     }
 
-    PRAGMA_OMP(omp parallel for collapse(2) schedule(static))
-    for (Size i = 0; i < size; i++) {
-        for (Size j = 0; j < degree; j += gap) {
-            auto input = interim[j];
-            bool is_positive = input >= 0;
-            auto abs = is_positive ? input : -input;
-            u64 res = modarith_[i].reduceBarrett(static_cast<utils::u128>(abs));
-            ptxt[i][j] = is_positive ? res : ptxt[i].prime() - res;
+    PRAGMA_OMP(omp parallel) {
+        PRAGMA_OMP(omp for schedule(static))
+        for (Size i = 0; i < msg_size; i++) {
+            if constexpr (std::is_same_v<MSG, Message> ||
+                          std::is_same_v<MSG, FMessage>) {
+                interim[i] = static_cast<utils::i128>(
+                    utils::addZeroPointFive(msg[i].real() * delta));
+                interim[msg_size + i] = static_cast<utils::i128>(
+                    utils::addZeroPointFive(msg[i].imag() * delta));
+            } else if constexpr (std::is_same_v<MSG, CoeffMessage> ||
+                                 std::is_same_v<MSG, FCoeffMessage>) {
+                interim[i] = static_cast<utils::i128>(
+                    utils::addZeroPointFive(msg[i] * delta));
+            }
+        }
+
+        PRAGMA_OMP(omp for collapse(2) schedule(static))
+        for (Size i = 0; i < size; i++) {
+            for (Size j = 0; j < degree / gap; j++) {
+                const utils::u128 input = static_cast<utils::u128>(interim[j]);
+                utils::u128 sign_mask;
+                if constexpr ((utils::i128(-1) >> 1) == utils::i128(-1)) {
+                    sign_mask = static_cast<utils::u128>(interim[j] >> 127);
+                } else {
+                    sign_mask = ~((input >> 127) - static_cast<utils::u128>(1));
+                }
+                const u64 res =
+                    modarith[i].reduceBarrett((input ^ sign_mask) - sign_mask);
+                const u64 sign_mask_64 = static_cast<u64>(sign_mask);
+                ptxt[i][j * gap] = (res & ~sign_mask_64) |
+                                   ((ptxt[i].prime() - res) & sign_mask_64);
+            }
         }
     }
 }
 
+template <Preset P>
 template <typename MSG>
-void Encryptor::encodeWithoutNTT(const MSG &msg, Polynomial &ptxt,
-                                 const Size size, const Real scale) const {
-    const Real delta{
-        scale == 0 ? std::pow(static_cast<Real>(2),
-                              context_->get_scale_factors()[ptxt.size() - 1])
-                   : scale};
-    if constexpr (std::is_same_v<MSG, CoeffMessage>) {
+void EncryptorT<P>::encodeWithoutNTT(const MSG &msg, Polynomial &ptxt,
+                                     const Size size, const Real scale) const {
+    const Real delta{scale == 0 ? std::pow(static_cast<Real>(2),
+                                           scale_factors[ptxt.size() - 1])
+                                : scale};
+    if constexpr (std::is_same_v<MSG, CoeffMessage> ||
+                  std::is_same_v<MSG, FCoeffMessage>) {
         embeddingToN(msg, delta, ptxt, size);
     } else if constexpr (std::is_same_v<MSG, Message>) {
         Message tmp(msg.size(), msg.data());
+        fft_.backwardFFT(tmp);
+        embeddingToN(tmp, delta, ptxt, size);
+    } else if constexpr (std::is_same_v<MSG, FMessage>) {
+        Message tmp(msg.size());
+        for (Size i = 0; i < msg.size(); ++i) {
+            tmp[i] = ComplexT<Real>(static_cast<Real>(msg[i].real()),
+                                    static_cast<Real>(msg[i].imag()));
+        }
         fft_.backwardFFT(tmp);
         embeddingToN(tmp, delta, ptxt, size);
     } else {
@@ -307,65 +341,70 @@ void Encryptor::encodeWithoutNTT(const MSG &msg, Polynomial &ptxt,
     }
 }
 
-DECL_ENCRYPT_TEMPLATE_MSG(Message, )
-DECL_ENCRYPT_TEMPLATE_MSG(CoeffMessage, )
+template <Preset P> void EncryptorT<P>::sampleZO(Size num_polyunit) const {
 
-void Encryptor::sampleZO(Size num_polyunit) const {
-    const auto degree = context_->get_degree();
+    // const auto pad_degree = std::max(degree, Size(32));
+    const auto pad_num = std::max(degree, Size(32)) / 32;
+    // std::vector<u64> random_vector(pad_degree);
 
-    Polynomial &poly = vx_buffer_;
-    poly.setNTT(false);
-
-    const auto pad_degree = (degree + 31) / 32 * 32;
-    std::vector<u64> random_vector(pad_degree);
-
-    for (Size i = 0; i < pad_degree; i += 32) {
-        u64 rnd = alea_get_random_uint64(as_.get());
-        for (Size j = 0; j < 32; j++, rnd >>= 2) {
-            // random_vector[i + j] = (rnd & 2) ? (rnd & 1) : -(rnd & 1);
-            random_vector[i + j] = ((rnd & 2) - 1) * (rnd & 1);
-        }
+    PRAGMA_OMP(omp single) {
+        vx_buffer_.setNTT(false);
+        rng_->getRandomUint64Array(samples_.data() + degree - pad_num, pad_num);
     }
 
-    const auto *const primes = context_->get_primes();
+    PRAGMA_OMP(omp for schedule(static))
+    for (Size i = 0; i < degree; ++i) {
+        u64 &rnd = samples_[i / 32];
+        // mask is 0xFFFFFFFF if bit is 1, 0x0 if bit is 0
+        mask_[i] = 0UL - ((rnd & 2) >> 1);
+        samples_[i] = (rnd & 1);
+        rnd >>= 2;
+    }
 
-    PRAGMA_OMP(omp parallel for collapse(2) schedule(static))
+    PRAGMA_OMP(omp for collapse(2) schedule(static))
     for (Size i = 0; i < num_polyunit; ++i) {
         for (Size j = 0; j < degree; ++j) {
-            // poly[i][j] = (random_vector[j] == -1) ? (primes[i] - 1) :
-            // random_vector[j];
-            poly[i][j] =
-                ((1 - random_vector[j]) >> 1) * primes[i] + random_vector[j];
+            const u64 mask = mask_[j];
+            const u64 bit = samples_[j];
+            vx_buffer_[i][j] = (bit & mask) | ((primes[i] - bit) & ~mask);
         }
     }
-    forwardNTT(modarith_, poly, num_polyunit);
+
+    forwardNTT(modarith, vx_buffer_, num_polyunit);
 }
 
-void Encryptor::sampleGaussian(const Size idx, const Size num_polyunit,
-                               const bool do_ntt) const {
-    const auto degree = context_->get_degree();
-    const auto *const primes = context_->get_primes();
+template <Preset P>
+void EncryptorT<P>::sampleGaussian(const Size num_polyunit,
+                                   const bool do_ntt) const {
 
-    std::vector<i64> samples(degree);
-    alea_sample_gaussian_int64_array(as_.get(), samples.data(), degree,
-                                     context_->get_gaussian_error_stdev());
+    PRAGMA_OMP(omp single) {
+        rng_->sampleGaussianInt64Array(i_samples_.data(), degree,
+                                       gaussian_error_stdev);
+        ex_buffer_.setNTT(false);
+    }
 
-    Polynomial &poly = ex_buffers_[idx];
-    poly.setNTT(false);
-
-    PRAGMA_OMP(omp parallel for schedule(static) collapse(2))
+    PRAGMA_OMP(omp for collapse(2) schedule(static))
     for (Size i = 0; i < num_polyunit; ++i) {
-        for (Size j = 0; j < context_->get_degree(); ++j) {
-            // Convert int64_t sample to u64
-            poly[i][j] = (samples[j] >= 0)
-                             ? static_cast<u64>(samples[j])
-                             : primes[i] - static_cast<u64>(-samples[j]);
+        for (Size j = 0; j < degree; ++j) {
+            const u64 prime = primes[i];
+            const u64 sample = static_cast<u64>(i_samples_[j]);
+
+            // sign_mask_rev is -1(0xFFFFFFFF) if i_samples_[j] positive,
+            // 0(0x0) if negative
+            const u64 sign_mask_rev = (sample >> 63) - 1u;
+
+            ex_buffer_[i][j] =
+                (sample & sign_mask_rev) | ((prime + sample) & ~sign_mask_rev);
         }
     }
 
     if (do_ntt) {
-        forwardNTT(modarith_, poly, num_polyunit);
+        forwardNTT(modarith, ex_buffer_, num_polyunit);
     }
 }
+
+#define X(preset) DECL_ENCRYPT_TEMPLATE(PRESET_##preset, )
+PRESET_LIST_WITH_EMPTY
+#undef X
 
 } // namespace deb

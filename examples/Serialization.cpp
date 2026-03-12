@@ -1,5 +1,5 @@
 /*
-* Copyright 2025 CryptoLab, Inc.
+* Copyright 2026 CryptoLab, Inc.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -26,19 +26,19 @@ int main() {
     // Define presets to test
     Preset preset;
     for (auto p : Presets) {
-        if (getContext(p)->get_num_secret() == 1) {
+        if (get_num_secret(p) == 1) {
             preset = p;
             break;
         }
     }
-    std::cout << "Preset: " << getContext(preset)->get_preset_name() << std::endl;
+    std::cout << "Preset: " << get_preset_name(preset) << std::endl;
 
     // Generate resources
     Message msg = generateRandomMessage(preset);
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
     Encryptor encryptor(preset);
     Decryptor decryptor(preset);
-    KeyGenerator keygen(sk);
+    KeyGenerator keygen(preset);
 
     std::string tmp_dir = "./example_data/";
     std::filesystem::create_directories(tmp_dir);
@@ -46,7 +46,7 @@ int main() {
 
     // Serialize message, sk, key, ciphertext
     {
-        SwitchKey enckey = keygen.genEncKey();
+        SwitchKey enckey = keygen.genEncKey(sk);
         Ciphertext cipher(preset);
         encryptor.encrypt(msg, enckey, cipher);
 

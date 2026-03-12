@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -40,10 +40,9 @@ void SecretKeyGenerator::genSecretKeyFromCoeffInplace(SecretKey &sk,
 }
 
 i8 *SecretKeyGenerator::GenCoeff(const Preset preset, const RNGSeed seed) {
-    const auto context = getContext(preset);
-    const auto dim = context->get_degree();
-    const auto num_secret = context->get_num_secret();
-    const auto section_size = context->get_rank() * dim;
+    const auto dim = get_degree(preset);
+    const auto num_secret = get_num_secret(preset);
+    const auto section_size = get_rank(preset) * dim;
     const auto size = section_size * num_secret;
     i8 *coeffs = new i8[size];
     GenCoeffInplace(preset, coeffs, seed);
@@ -52,30 +51,25 @@ i8 *SecretKeyGenerator::GenCoeff(const Preset preset, const RNGSeed seed) {
 
 RNGSeed SecretKeyGenerator::GenCoeffInplace(const Preset preset, i8 *coeffs,
                                             std::optional<const RNGSeed> seed) {
-    const auto context = getContext(preset);
-    const auto dim = context->get_degree();
-    const auto num_secret = context->get_num_secret();
-    const auto section_size = context->get_rank() * dim;
+    const auto dim = get_degree(preset);
+    const auto num_secret = get_num_secret(preset);
+    const auto section_size = get_rank(preset) * dim;
 
     if (!seed) {
         seed.emplace(SeedGenerator::Gen());
     }
-    alea_state *as = alea_init(reinterpret_cast<const u8 *>(seed->data()),
-                               ALEA_ALGORITHM_SHAKE256);
-    // Sample Hamming weight
+    auto rng = createRandomGenerator(seed.value());
     for (Size i = 0; i < num_secret; ++i) {
-        alea_sample_hwt_int8_array(
-            as, coeffs + i * section_size, section_size,
-            static_cast<int>(context->get_hamming_weight()));
+        rng->sampleHwtInt8Array(coeffs + i * section_size, section_size,
+                                static_cast<int>(get_hamming_weight(preset)));
     }
-    alea_free(as);
     return seed.value();
 }
 
 SecretKey SecretKeyGenerator::ComputeEmbedding(const Preset preset,
                                                const i8 *coeffs,
                                                std::optional<Size> level) {
-    level = level.value_or(getContext(preset)->get_num_p() - 1);
+    level = level.value_or(get_num_p(preset) - 1);
     SecretKey sk(preset);
     sk.allocPolys(level.value() + 1);
     ComputeEmbeddingInplace(sk, coeffs);
@@ -84,40 +78,34 @@ SecretKey SecretKeyGenerator::ComputeEmbedding(const Preset preset,
 
 void SecretKeyGenerator::ComputeEmbeddingInplace(SecretKey &sk,
                                                  const i8 *coeffs) {
-    const auto context = getContext(sk.preset());
-    const auto dim = context->get_degree();
-    const auto num_secret = context->get_num_secret();
-    const auto rank = context->get_rank();
-    const auto section_size = rank * dim;
+    const auto dim = get_degree(sk.preset());
+    const auto num_secret = get_num_secret(sk.preset());
+    const auto rank = get_rank(sk.preset());
 
     deb_assert(coeffs != nullptr,
                "[SecretKeyGenerator::ComputeEmbeddingInplace] Coefficients are "
                "not allocated.");
     if (sk.coeffs() != coeffs) {
         sk.allocCoeffs();
-        memcpy(sk.coeffs(), coeffs, section_size * num_secret * sizeof(i8));
+        memcpy(sk.coeffs(), coeffs, rank * dim * num_secret * sizeof(i8));
     }
 
-    if (sk.numPoly() != num_secret * rank) {
+    if (sk.numPoly() != rank * num_secret) {
         sk.allocPolys();
     }
-    for (Size ns_id = 0; ns_id < num_secret; ++ns_id) {
-        for (Size i = 0; i < rank; ++i) {
-            const Size idx = ns_id * rank + i;
-            for (Size j = 0; j < sk[idx].size(); ++j) {
-                u64 *ptr = sk[idx][j].data();
-                for (Size k = 0; k < dim; ++k) {
-                    ptr[k] =
-                        (sk.coeffs()[i * dim + k] >= 0)
-                            ? static_cast<u64>(sk.coeffs()[i * dim + k])
-                            : context->get_primes()[j] -
-                                  static_cast<u64>(-sk.coeffs()[i * dim + k]);
-                }
-                // TODO: reuse NTT object
-                utils::NTT ntt(context->get_degree(), context->get_primes()[j]);
-                ntt.computeForward(sk[idx][j].data());
-                sk[idx][j].setNTT(true);
+    for (Size i = 0; i < rank * num_secret; ++i) {
+        for (Size j = 0; j < sk[i].size(); ++j) {
+            u64 *ptr = sk[i][j].data();
+            for (Size k = 0; k < dim; ++k) {
+                ptr[k] = (sk.coeffs()[i * dim + k] >= 0)
+                             ? static_cast<u64>(sk.coeffs()[i * dim + k])
+                             : get_primes(sk.preset())[j] -
+                                   static_cast<u64>(-sk.coeffs()[i * dim + k]);
             }
+            // TODO: reuse NTT object
+            utils::NTT ntt(dim, get_primes(sk.preset())[j]);
+            ntt.computeForward(sk[i][j].data());
+            sk[i][j].setNTT(true);
         }
     }
 }
@@ -150,20 +138,19 @@ void SecretKeyGenerator::GenSecretKeyFromCoeffInplace(SecretKey &sk,
 }
 
 void completeSecretKey(SecretKey &sk, std::optional<Size> level) {
-    const auto context = getContext(sk.preset());
-    const auto rank = context->get_rank();
-    const auto num_secret = context->get_num_secret();
-    const auto degree = context->get_degree();
+    const auto rank = get_rank(sk.preset());
+    const auto num_secret = get_num_secret(sk.preset());
+    const auto degree = get_degree(sk.preset());
     if (sk.coeffsSize() != rank * num_secret * degree) {
         sk.allocCoeffs();
         if (!sk.hasSeed()) {
             throw std::runtime_error(
                 "[completeSecretKey] Secret key has no seed.");
         }
-        SecretKeyGenerator::GenCoeffInplace(context->get_preset(), sk.coeffs(),
+        SecretKeyGenerator::GenCoeffInplace(sk.preset(), sk.coeffs(),
                                             sk.getSeed());
     }
-    level = level.value_or(context->get_num_p() - 1);
+    level = level.value_or(get_num_p(sk.preset()) - 1);
     if (sk.numPoly() != num_secret * rank ||
         sk[0].size() != level.value() + 1) {
         sk.allocPolys(level.value() + 1);

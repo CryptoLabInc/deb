@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,25 @@
 
 #pragma once
 
+#if !defined(__STDC_WANT_LIB_EXT1__)
+#define __STDC_WANT_LIB_EXT1__ 1
+#endif
+
 #include <cassert>
 #include <cstdint>
+#include <cstring> // explicit_bzero / memset
 #include <stdexcept>
+
+#if defined(DEB_SECURE_ZERO_LIBSODIUM)
+#include <sodium.h>
+#elif defined(DEB_SECURE_ZERO_OPENSSL)
+#include <openssl/crypto.h>
+#elif defined(DEB_SECURE_ZERO_NATIVE)
+#if defined(_WIN32) || defined(_WIN64)
+#define NOMINMAX
+#include <windows.h>
+#endif
+#endif
 
 /**
  * @brief Helper macro exposing the GCC version as a single integer.
@@ -110,3 +126,60 @@
     do {                                                                       \
     } while (0)
 #endif
+
+/* Compile-time detection of secure memory-zeroing primitive.
+ * Priority:
+ *  1. explicit_bzero  – glibc >= 2.25, OpenBSD, FreeBSD >= 11, NetBSD, macOS
+ *  2. SecureZeroMemory – Windows
+ *  3. memset_s        – C11 Annex K (implementation defines __STDC_LIB_EXT1__)
+ *  4. volatile loop   – fallback
+ *
+ * On glibc without _GNU_SOURCE, string.h does not declare explicit_bzero even
+ * though the symbol exists in libc; supply a forward declaration in that case.
+ */
+#if defined(__GLIBC__) &&                                                      \
+    (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 25))
+#define DEB_HAVE_EXPLICIT_BZERO
+#ifndef _GNU_SOURCE
+extern void explicit_bzero(void *, size_t);
+#endif
+#elif defined(__OpenBSD__) || (defined(__FreeBSD__) && __FreeBSD__ >= 11) ||   \
+    defined(__NetBSD__) || defined(__APPLE__)
+#define DEB_HAVE_EXPLICIT_BZERO
+#elif defined(_WIN32) || defined(_WIN64)
+#define DEB_HAVE_SECURE_ZERO_MEMORY
+#elif defined(__STDC_LIB_EXT1__)
+#define DEB_HAVE_MEMSET_S
+#endif
+
+/**
+ * @brief Securely zeroes memory to prevent sensitive data leakage.
+ * @param ptr Pointer to the memory region.
+ * @param len Length of the memory region in bytes.
+ */
+inline void deb_secure_zero(void *ptr, std::size_t len) noexcept {
+    if (ptr == nullptr || len == 0)
+        return;
+#if defined(DEB_SECURE_ZERO_LIBSODIUM)
+    sodium_memzero(ptr, len);
+#elif defined(DEB_SECURE_ZERO_OPENSSL)
+    OPENSSL_cleanse(ptr, len);
+#elif defined(DEB_SECURE_ZERO_NATIVE)
+#if defined(DEB_HAVE_SECURE_ZERO_MEMORY)
+    SecureZeroMemory(ptr, len);
+#elif defined(DEB_HAVE_EXPLICIT_BZERO)
+    explicit_bzero(ptr, len);
+#elif defined(DEB_HAVE_MEMSET_S)
+    memset_s(ptr, len, 0, len);
+#else
+    // volatile byte loop — best-effort against compiler optimisation
+    volatile unsigned char *p = static_cast<volatile unsigned char *>(ptr);
+    for (std::size_t i = 0; i < len; ++i)
+        p[i] = 0;
+#endif
+#else // DEB_SECURE_ZERO is not seted (NONE)
+    // Fallback to memset, does not guarantee zeroing against compiler
+    // optimizations, but better than nothing
+    std::memset(ptr, 0, len);
+#endif
+}

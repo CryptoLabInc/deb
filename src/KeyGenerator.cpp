@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,53 +16,45 @@
 
 #include "KeyGenerator.hpp"
 #include "SecretKeyGenerator.hpp"
-
 #include "utils/Basic.hpp"
-
-#include <random>
-
-#include <iostream>
 
 namespace {
 
-inline void checkSecretKey(const deb::Context &context,
-                           const std::optional<deb::SecretKey> &sk) {
-    deb_assert(sk.has_value(), "[KeyGenerator] Secret key is not set.");
-    deb_assert(context->get_preset() == sk->preset(),
+inline void checkSecretKey(const deb::Preset preset, const deb::SecretKey &sk) {
+    deb_assert(preset == sk.preset(),
                "[KeyGenerator] Preset mismatch between KeyGenerator and "
                "SecretKey.");
-    deb_assert(sk->numPoly() == context->get_rank() * context->get_num_secret(),
+    deb_assert(get_rank(preset) * get_num_secret(preset) == sk.numPoly(),
                "[KeyGenerator] Secret key has no embedded polynomials.");
     // Maybe we can remove this check to allow non-NTT secret keys
-    deb_assert((*sk)[0][0].isNTT(),
+    deb_assert(sk[0][0].isNTT(),
                "[KeyGenerator] Secret key polynomials are not in NTT domain.");
 };
 
-inline void checkSwk(const deb::Context &context, const deb::SwitchKey &swk,
+inline void checkSwk(const deb::Preset &preset, const deb::SwitchKey &swk,
                      const deb::SwitchKeyKind expected_type) {
-    deb_assert(context->get_preset() == swk.preset(),
+    deb_assert(preset == swk.preset(),
                "[KeyGenerator] Preset mismatch between KeyGenerator and "
                "SwitchingKey.");
-    deb_assert(swk.type() == expected_type,
+    deb_assert(expected_type == swk.type(),
                "[KeyGenerator] The provided switching key has invalid type.");
 };
 
-inline void checkModPackKeyBundleCondition(const deb::Context &context,
-                                           const deb::Context &context_from,
-                                           const deb::Context &context_to) {
+inline void checkModPackKeyBundleCondition(const deb::Preset &preset,
+                                           const deb::Preset &preset_from,
+                                           const deb::Preset &preset_to) {
 
-    [[maybe_unused]] const deb::Size from_degree = context_from->get_degree();
-    [[maybe_unused]] const deb::Size from_rank = context_from->get_rank();
-    [[maybe_unused]] const deb::Size to_degree = context_to->get_degree();
-    [[maybe_unused]] const deb::Size to_rank = context_to->get_rank();
-    [[maybe_unused]] const deb::Size degree = context->get_degree();
-
+    [[maybe_unused]] const deb::Size from_degree = get_degree(preset_from);
+    [[maybe_unused]] const deb::Size from_rank = get_rank(preset_from);
+    [[maybe_unused]] const deb::Size to_degree = get_degree(preset_to);
+    [[maybe_unused]] const deb::Size to_rank = get_rank(preset_to);
+    [[maybe_unused]] const deb::Size degree = get_degree(preset);
     // check dimension is compatible
     // check output ctxt dimension could be resulted by a single key switching
-    deb_assert(
-        to_degree * to_rank == degree,
-        "[genModPackKeyBundle] Total dimension of output secret key is not "
-        "equal to the RLWE encryption dimension");
+    deb_assert(to_degree * to_rank == degree,
+               "[genModPackKeyBundle] Total dimension of output secret key is "
+               "not "
+               "equal to the RLWE encryption dimension");
     // check input ctxt entries can be combined to the output ctxt entries
     deb_assert(to_degree % from_degree == 0,
                "[genModPackKeyBundle] The degree of input secret key does not "
@@ -92,39 +84,48 @@ inline void automorphism(const deb::i8 *op, deb::i8 *res, const deb::Size sig,
 
 namespace deb {
 
-KeyGenerator::KeyGenerator(const Preset preset,
-                           std::optional<const RNGSeed> seeds)
-    : context_(getContext(preset)), sk_(std::nullopt),
-      fft_(context_->get_degree()) {
-    for (u64 i = 0; i < context_->get_num_p(); ++i) {
-        modarith_.emplace_back(context_->get_degree(),
-                               context_->get_primes()[i]);
+template <Preset P>
+KeyGeneratorT<P>::KeyGeneratorT(std::optional<const RNGSeed> seeds)
+    : KeyGeneratorT(P, std::move(seeds)) {
+    if constexpr (P == PRESET_EMPTY) {
+        throw std::runtime_error(
+            "[KeyGenerator] Preset must be specified for EMPTY preset.");
+    }
+}
+
+template <Preset P>
+KeyGeneratorT<P>::KeyGeneratorT(const Preset preset,
+                                std::optional<const RNGSeed> seeds)
+    : PresetTraits<P>(preset), fft_(degree) {
+    for (u64 i = 0; i < num_p; ++i) {
+        modarith.emplace_back(degree, primes[i]);
     }
     if (!seeds) {
         seeds.emplace(SeedGenerator::Gen());
     }
-    as_ = std::shared_ptr<void>(
-        alea_init(to_alea_seed(seeds.value()), ALEA_ALGORITHM_SHAKE256),
-        [](void *p) { alea_free(static_cast<alea_state *>(p)); });
+    rng_ = createRandomGenerator(seeds.value());
 
     computeConst();
 }
 
-KeyGenerator::KeyGenerator(const SecretKey &sk,
-                           std::optional<const RNGSeed> seeds)
-    : KeyGenerator(sk.preset(), std::move(seeds)) {
-    sk_ = sk;
+template <Preset P>
+KeyGeneratorT<P>::KeyGeneratorT(const Preset preset,
+                                std::shared_ptr<RandomGenerator> rng)
+    : PresetTraits<P>(preset), rng_(std::move(rng)), fft_(degree) {
+    for (u64 i = 0; i < num_p; ++i) {
+        modarith.emplace_back(degree, primes[i]);
+    }
+    computeConst();
 }
 
-void KeyGenerator::genSwitchingKey(const Polynomial *from, const Polynomial *to,
-                                   Polynomial *ax, Polynomial *bx,
-                                   const Size ax_size,
-                                   const Size bx_size) const {
-    const Size num_secret = context_->get_num_secret();
-    const Size degree = context_->get_degree();
-    const Size length = context_->get_num_base() + context_->get_num_qp();
-    const Size max_length = context_->get_num_p();
-    const Size dnum = context_->get_gadget_rank();
+template <Preset P>
+void KeyGeneratorT<P>::genSwitchingKey(const Polynomial *from,
+                                       const Polynomial *to, Polynomial *ax,
+                                       Polynomial *bx, const Size ax_size,
+                                       const Size bx_size) const {
+    const Size length = num_base + num_qp;
+    const Size max_length = num_p;
+    const Size dnum = gadget_rank;
     const Size alpha = (length + dnum - 1) / dnum;
     Size a_size = ax_size == 0 ? dnum : ax_size;
     Size b_size = bx_size == 0 ? dnum * num_secret : bx_size;
@@ -133,7 +134,7 @@ void KeyGenerator::genSwitchingKey(const Polynomial *from, const Polynomial *to,
         sampleUniform(ax[i]);
     }
 
-    Polynomial tmp(context_, max_length);
+    Polynomial tmp(preset, max_length);
 
     const Size s_size = b_size / a_size;
     for (Size idx = 0; idx < a_size; ++idx) {
@@ -142,8 +143,8 @@ void KeyGenerator::genSwitchingKey(const Polynomial *from, const Polynomial *to,
             auto &b = bx[idx + sid * a_size];
             auto ex = sampleGaussian(max_length, true);
 
-            mulPoly(modarith_, a, to[sid], b);
-            subPoly(modarith_, ex, b, b);
+            mulPoly(modarith, a, to[sid], b);
+            subPoly(modarith, ex, b, b);
 
             for (Size tdx = 0; tdx < max_length; ++tdx) {
                 if (tdx < idx * alpha ||
@@ -153,37 +154,36 @@ void KeyGenerator::genSwitchingKey(const Polynomial *from, const Polynomial *to,
                     }
                 }
             }
-            constMulPoly(modarith_, from[sid], p_mod_.data(), tmp, idx * alpha,
+            constMulPoly(modarith, from[sid], p_mod_.data(), tmp, idx * alpha,
                          std::min((idx + 1) * alpha, length));
-            constMulPoly(modarith_, tmp, hat_q_i_mod_.data(), tmp, idx * alpha,
+            constMulPoly(modarith, tmp, hat_q_i_mod_.data(), tmp, idx * alpha,
                          std::min((idx + 1) * alpha, length));
             // TODO: optimize inplace addition
-            // addPoly(modarith_, b, tmp, b);
+            // addPoly(modarith, b, tmp, b);
             // Polynomial tmp_copy(tmp, idx * alpha,
             //                     std::min(alpha, length - idx * alpha));
             // Polynomial b_copy(b, idx * alpha,
             //                   std::min(alpha, length - idx * alpha));
-            // addPoly(modarith_, b_copy, tmp_copy, b_copy);
-            addPoly(modarith_, b, tmp, b);
+            // addPoly(modarith, b_copy, tmp_copy, b_copy);
+            addPolyConst(modarith, b, tmp, b);
         }
     }
 }
 
-SwitchKey KeyGenerator::genEncKey(std::optional<SecretKey> sk) const {
-    SwitchKey enckey(context_, SWK_ENC);
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genEncKey(const SecretKey &sk) const {
+    SwitchKey enckey(preset, SWK_ENC);
     genEncKeyInplace(enckey, sk);
     return enckey;
 }
 
-void KeyGenerator::genEncKeyInplace(SwitchKey &enckey,
-                                    std::optional<SecretKey> sk) const {
-    if (!sk.has_value())
-        sk = sk_;
-    checkSecretKey(context_, sk);
-    checkSwk(context_, enckey, SWK_ENC);
+template <Preset P>
+void KeyGeneratorT<P>::genEncKeyInplace(SwitchKey &enckey,
+                                        const SecretKey &sk) const {
+    checkSecretKey(preset, sk);
+    checkSwk(preset, enckey, SWK_ENC);
     const bool ntt_state = true; // currently only support ntt state keys
-    const Size num_poly = context_->get_num_p();
-    const Size num_secret = context_->get_num_secret();
+    const Size num_poly = num_p;
     deb_assert(enckey.bxSize() == num_secret && enckey.axSize() == 1,
                "[KeyGenerator::genEncKeyInplace] "
                "The provided switching key has invalid size.");
@@ -192,26 +192,25 @@ void KeyGenerator::genEncKeyInplace(SwitchKey &enckey,
     auto ex = sampleGaussian(num_poly, ntt_state);
 
     for (Size i = 0; i < num_secret; ++i) {
-        mulPoly(modarith_, enckey.ax(), (*sk)[i], enckey.bx(i));
-        subPoly(modarith_, ex, enckey.bx(i), enckey.bx(i));
+        mulPoly(modarith, enckey.ax(), sk[i], enckey.bx(i));
+        subPoly(modarith, ex, enckey.bx(i), enckey.bx(i));
     }
 }
 
-SwitchKey KeyGenerator::genMultKey(std::optional<SecretKey> sk) const {
-    SwitchKey mulkey(context_, SWK_MULT);
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genMultKey(const SecretKey &sk) const {
+    SwitchKey mulkey(preset, SWK_MULT);
     genMultKeyInplace(mulkey, sk);
     return mulkey;
 }
 
-void KeyGenerator::genMultKeyInplace(SwitchKey &mulkey,
-                                     std::optional<SecretKey> sk) const {
-    if (!sk.has_value())
-        sk = sk_;
-    checkSecretKey(context_, sk);
-    checkSwk(context_, mulkey, SWK_MULT);
+template <Preset P>
+void KeyGeneratorT<P>::genMultKeyInplace(SwitchKey &mulkey,
+                                         const SecretKey &sk) const {
+    checkSecretKey(preset, sk);
+    checkSwk(preset, mulkey, SWK_MULT);
     const bool ntt_state = true; // currently only support ntt state keys
-    const Size num_secret = context_->get_num_secret();
-    const Size max_length = context_->get_num_p();
+    const Size max_length = num_p;
     deb_assert(mulkey.bxSize() == num_secret * mulkey.dnum() &&
                    mulkey.axSize() == mulkey.dnum(),
                "[KeyGenerator::genMultKeyInplace] "
@@ -219,31 +218,35 @@ void KeyGenerator::genMultKeyInplace(SwitchKey &mulkey,
 
     std::vector<Polynomial> sx2;
     for (Size i = 0; i < num_secret; ++i) {
-        sx2.emplace_back(context_, max_length);
+        sx2.emplace_back(preset, max_length);
         sx2[i].setNTT(ntt_state);
 
-        mulPoly(modarith_, (*sk)[i], (*sk)[i], sx2[i]);
+        mulPoly(modarith, sk[i], sk[i], sx2[i]);
     }
-    genSwitchingKey(sx2.data(), sk->data(), mulkey.getAx().data(),
+    genSwitchingKey(sx2.data(), sk.data(), mulkey.getAx().data(),
                     mulkey.getBx().data());
+    for (Size i = 0; i < sx2.size(); ++i) {
+        for (Size j = 0; j < sx2[i].size(); ++j) {
+            deb_secure_zero(sx2[i][j].data(), sx2[i][j].degree() * sizeof(u64));
+        }
+    }
 }
 
-SwitchKey KeyGenerator::genConjKey(std::optional<SecretKey> sk) const {
-    SwitchKey conjkey(context_, SWK_CONJ);
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genConjKey(const SecretKey &sk) const {
+    SwitchKey conjkey(preset, SWK_CONJ);
     genConjKeyInplace(conjkey, sk);
     return conjkey;
 }
 
-void KeyGenerator::genConjKeyInplace(SwitchKey &conjkey,
-                                     std::optional<SecretKey> sk) const {
-    if (!sk.has_value())
-        sk = sk_;
-    checkSecretKey(context_, sk);
-    checkSwk(context_, conjkey, SWK_CONJ);
-    const bool ntt_state = (*sk)[0][0].isNTT();
+template <Preset P>
+void KeyGeneratorT<P>::genConjKeyInplace(SwitchKey &conjkey,
+                                         const SecretKey &sk) const {
+    checkSecretKey(preset, sk);
+    checkSwk(preset, conjkey, SWK_CONJ);
+    const bool ntt_state = sk[0][0].isNTT();
 
-    const Size num_secret = context_->get_num_secret();
-    const Size max_length = context_->get_num_p();
+    const Size max_length = num_p;
     deb_assert(conjkey.bxSize() == num_secret * conjkey.dnum() &&
                    conjkey.axSize() == conjkey.dnum(),
                "[KeyGenerator::genConjKeyInplace] "
@@ -251,36 +254,39 @@ void KeyGenerator::genConjKeyInplace(SwitchKey &conjkey,
 
     std::vector<Polynomial> sx;
     for (Size i = 0; i < num_secret; ++i) {
-        sx.emplace_back(context_, max_length);
+        sx.emplace_back(preset, max_length);
         sx[i].setNTT(ntt_state);
         // frobenius map in NTT
-        frobeniusMapInNTT((*sk)[i], -1, sx[i]);
+        frobeniusMapInNTT(sk[i], -1, sx[i]);
     }
 
-    genSwitchingKey(sx.data(), sk->data(), conjkey.getAx().data(),
+    genSwitchingKey(sx.data(), sk.data(), conjkey.getAx().data(),
                     conjkey.getBx().data());
+    for (Size i = 0; i < sx.size(); ++i) {
+        for (Size j = 0; j < sx[i].size(); ++j) {
+            deb_secure_zero(sx[i][j].data(), sx[i][j].degree() * sizeof(u64));
+        }
+    }
 }
 
-SwitchKey KeyGenerator::genLeftRotKey(const Size rot,
-                                      std::optional<SecretKey> sk) const {
-    SwitchKey rotkey(context_, SWK_ROT);
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genLeftRotKey(const Size rot,
+                                          const SecretKey &sk) const {
+    SwitchKey rotkey(preset, SWK_ROT);
     genLeftRotKeyInplace(rot, rotkey, sk);
     return rotkey;
 }
 
-void KeyGenerator::genLeftRotKeyInplace(const Size rot, SwitchKey &rotkey,
-                                        std::optional<SecretKey> sk) const {
-    if (!sk.has_value())
-        sk = sk_;
-    checkSecretKey(context_, sk);
-    checkSwk(context_, rotkey, SWK_ROT);
-    deb_assert(rot < context_->get_num_slots(),
-               "[KeyGenerator::genLeftRotKeyInplace] "
-               "Rotation value exceeds number of slots.");
+template <Preset P>
+void KeyGeneratorT<P>::genLeftRotKeyInplace(const Size rot, SwitchKey &rotkey,
+                                            const SecretKey &sk) const {
+    checkSecretKey(preset, sk);
+    checkSwk(preset, rotkey, SWK_ROT);
+    deb_assert(rot < num_slots, "[KeyGenerator::genLeftRotKeyInplace] "
+                                "Rotation value exceeds number of slots.");
     const auto ntt_state = true; // currently only support ntt state keys
 
-    const Size num_secret = context_->get_num_secret();
-    const Size max_length = context_->get_num_p();
+    const Size max_length = num_p;
     deb_assert(rotkey.bxSize() == num_secret * rotkey.dnum() &&
                    rotkey.axSize() == rotkey.dnum(),
                "[KeyGenerator::genLeftRotKeyInplace] "
@@ -290,285 +296,320 @@ void KeyGenerator::genLeftRotKeyInplace(const Size rot, SwitchKey &rotkey,
 
     std::vector<Polynomial> sx;
     for (Size i = 0; i < num_secret; ++i) {
-        sx.emplace_back(context_, max_length);
+        sx.emplace_back(preset, max_length);
         sx[i].setNTT(ntt_state);
 
-        frobeniusMapInNTT((*sk)[i], static_cast<i32>(fft_.getPowerOfFive(rot)),
+        frobeniusMapInNTT(sk[i], static_cast<i32>(fft_.getPowerOfFive(rot)),
                           sx[i]);
     }
-    genSwitchingKey(sx.data(), sk->data(), rotkey.getAx().data(),
+    genSwitchingKey(sx.data(), sk.data(), rotkey.getAx().data(),
                     rotkey.getBx().data());
+    for (Size i = 0; i < sx.size(); ++i) {
+        for (Size j = 0; j < sx[i].size(); ++j) {
+            deb_secure_zero(sx[i][j].data(), sx[i][j].degree() * sizeof(u64));
+        }
+    }
 }
 
-SwitchKey KeyGenerator::genRightRotKey(const Size rot,
-                                       std::optional<SecretKey> sk) const {
-    const Size left_rot_id = context_->get_num_slots() - rot;
-    SwitchKey rotkey(context_, SWK_ROT);
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genRightRotKey(const Size rot,
+                                           const SecretKey &sk) const {
+    const Size left_rot_id = num_slots - rot;
+    SwitchKey rotkey(preset, SWK_ROT);
     genLeftRotKeyInplace(left_rot_id, rotkey, sk);
     return rotkey;
 }
 
-void KeyGenerator::genRightRotKeyInplace(const Size rot, SwitchKey &rotkey,
-                                         std::optional<SecretKey> sk) const {
-    genLeftRotKeyInplace(context_->get_num_slots() - rot, rotkey, sk);
+template <Preset P>
+void KeyGeneratorT<P>::genRightRotKeyInplace(const Size rot, SwitchKey &rotkey,
+                                             const SecretKey &sk) const {
+    genLeftRotKeyInplace(num_slots - rot, rotkey, sk);
 }
 
-SwitchKey KeyGenerator::genAutoKey(const Size sig,
-                                   std::optional<SecretKey> sk) const {
-    SwitchKey autokey(context_, SWK_AUTO);
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genAutoKey(const Size sig,
+                                       const SecretKey &sk) const {
+    SwitchKey autokey(preset, SWK_AUTO);
     genAutoKeyInplace(sig, autokey, sk);
     return autokey;
 }
-void KeyGenerator::genAutoKeyInplace(const Size sig, SwitchKey &autokey,
-                                     std::optional<SecretKey> sk) const {
-    if (!sk.has_value())
-        sk = sk_;
-    checkSecretKey(context_, sk);
-    checkSwk(context_, autokey, SWK_AUTO);
-    deb_assert(sig < context_->get_degree(),
-               "[KeyGenerator::genAutoKey] "
-               "Signature value exceeds polynomial degree.");
+template <Preset P>
+void KeyGeneratorT<P>::genAutoKeyInplace(const Size sig, SwitchKey &autokey,
+                                         const SecretKey &sk) const {
+    checkSecretKey(preset, sk);
+    checkSwk(preset, autokey, SWK_AUTO);
+    deb_assert(sig < degree, "[KeyGenerator::genAutoKey] "
+                             "Signature value exceeds polynomial degree.");
 
-    const Size num_secret = context_->get_num_secret();
-    const Size degree = context_->get_degree();
     deb_assert(autokey.bxSize() == num_secret * autokey.dnum() &&
                    autokey.axSize() == autokey.dnum(),
                "[KeyGenerator::genAutoKey] "
                "The provided switching key has invalid size.");
     autokey.setRotIdx(sig);
 
-    std::vector<i8> coeff_sig(degree);
+    std::vector<i8> coeff_sig(degree * num_secret);
 
-    automorphism(sk->coeffs(), coeff_sig.data(), sig, degree);
-    SecretKey sk_sig = SecretKeyGenerator::GenSecretKeyFromCoeff(
-        context_->get_preset(), coeff_sig.data());
-    genSwitchingKey(sk_sig.data(), sk->data(), autokey.getAx().data(),
+    for (Size i = 0; i < num_secret; ++i) {
+        automorphism(sk.coeffs() + i * degree, coeff_sig.data() + i * degree,
+                     sig, degree);
+    }
+    SecretKey sk_sig =
+        SecretKeyGenerator::GenSecretKeyFromCoeff(preset, coeff_sig.data());
+    genSwitchingKey(sk_sig.data(), sk.data(), autokey.getAx().data(),
                     autokey.getBx().data());
+    deb_secure_zero(coeff_sig.data(), coeff_sig.size() * sizeof(i8));
+    // sk_sig.zeroize(); // automatically zeroized when going out of scope
 }
 
-SwitchKey KeyGenerator::genComposeKey(const SecretKey &sk_from,
-                                      std::optional<SecretKey> sk) const {
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genComposeKey(const SecretKey &sk_from,
+                                          const SecretKey &sk) const {
     // TODO: check prime compatibility
     return genComposeKey(sk_from.coeffs(), sk_from.coeffsSize(), sk);
 }
-SwitchKey KeyGenerator::genComposeKey(const std::vector<i8> coeffs,
-                                      std::optional<SecretKey> sk) const {
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genComposeKey(const std::vector<i8> coeffs,
+                                          const SecretKey &sk) const {
     return genComposeKey(coeffs.data(), static_cast<Size>(coeffs.size()), sk);
 }
-SwitchKey KeyGenerator::genComposeKey(const i8 *coeffs, const Size coeffs_size,
-                                      std::optional<SecretKey> sk) const {
-    SwitchKey composekey(context_, SWK_COMPOSE);
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genComposeKey(const i8 *coeffs,
+                                          const Size coeffs_size,
+                                          const SecretKey &sk) const {
+    SwitchKey composekey(preset, SWK_COMPOSE);
     genComposeKeyInplace(coeffs, coeffs_size, composekey, sk);
     return composekey;
 }
 
-void KeyGenerator::genComposeKeyInplace(const SecretKey &sk_from,
-                                        SwitchKey &composekey,
-                                        std::optional<SecretKey> sk) const {
+template <Preset P>
+void KeyGeneratorT<P>::genComposeKeyInplace(const SecretKey &sk_from,
+                                            SwitchKey &composekey,
+                                            const SecretKey &sk) const {
     genComposeKeyInplace(sk_from.coeffs(), sk_from.coeffsSize(), composekey,
                          sk);
 }
-void KeyGenerator::genComposeKeyInplace(const std::vector<i8> coeffs,
-                                        SwitchKey &composekey,
-                                        std::optional<SecretKey> sk) const {
+template <Preset P>
+void KeyGeneratorT<P>::genComposeKeyInplace(const std::vector<i8> coeffs,
+                                            SwitchKey &composekey,
+                                            const SecretKey &sk) const {
     genComposeKeyInplace(coeffs.data(), static_cast<Size>(coeffs.size()),
                          composekey, sk);
 }
-void KeyGenerator::genComposeKeyInplace(const i8 *coeffs,
-                                        const Size coeffs_size,
-                                        SwitchKey &composekey,
-                                        std::optional<SecretKey> sk) const {
-    if (!sk.has_value())
-        sk = sk_;
-    checkSecretKey(context_, sk);
-    checkSwk(context_, composekey, SWK_COMPOSE);
+template <Preset P>
+void KeyGeneratorT<P>::genComposeKeyInplace(const i8 *coeffs,
+                                            const Size coeffs_size,
+                                            SwitchKey &composekey,
+                                            const SecretKey &sk) const {
+    checkSecretKey(preset, sk);
+    checkSwk(preset, composekey, SWK_COMPOSE);
 
-    const Size num_secret = context_->get_num_secret();
-    const Size deg_ratio = context_->get_degree() / coeffs_size;
-    deb_assert(coeffs_size * deg_ratio == context_->get_degree(),
+    const Size deg_ratio = degree / coeffs_size;
+    deb_assert(coeffs_size * deg_ratio == degree,
                "[KeyGenerator::genComposeKey] "
                "The provided secret key has invalid size.");
-    deb_assert(composekey.bxSize() == num_secret * composekey.dnum() &&
+    deb_assert(num_secret == 1, "[KeyGenerator::genComposeKey] "
+                                "Composition key generation is only supported "
+                                "for single-secret presets.");
+    deb_assert(composekey.bxSize() == composekey.dnum() &&
                    composekey.axSize() == composekey.dnum(),
                "[KeyGenerator::genComposeKeyInplace] "
                "The provided switching key has invalid size.");
 
-    std::vector<i8> coeffs_embed(context_->get_degree(), 0);
+    std::vector<i8> coeffs_embed(degree, 0);
     for (Size i = 0; i < coeffs_size; ++i) {
         coeffs_embed[i * deg_ratio] = coeffs[i];
     }
-    SecretKey sk_from = SecretKeyGenerator::GenSecretKeyFromCoeff(
-        context_->get_preset(), coeffs_embed.data());
+    SecretKey sk_from =
+        SecretKeyGenerator::GenSecretKeyFromCoeff(preset, coeffs_embed.data());
 
-    genSwitchingKey(sk_from.data(), sk->data(), composekey.getAx().data(),
+    genSwitchingKey(sk_from.data(), sk.data(), composekey.getAx().data(),
                     composekey.getBx().data());
+    // sk_from.zeroize(); // automatically zeroized when going out of scope
 }
 
-SwitchKey KeyGenerator::genDecomposeKey(const SecretKey &sk_to,
-                                        std::optional<SecretKey> sk) const {
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genDecomposeKey(const SecretKey &sk_to,
+                                            const SecretKey &sk) const {
     return genDecomposeKey(sk_to.coeffs(), sk_to.coeffsSize(), sk);
 }
-SwitchKey KeyGenerator::genDecomposeKey(const std::vector<i8> coeffs,
-                                        std::optional<SecretKey> sk) const {
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genDecomposeKey(const std::vector<i8> coeffs,
+                                            const SecretKey &sk) const {
     return genDecomposeKey(coeffs.data(), static_cast<Size>(coeffs.size()), sk);
 }
-SwitchKey KeyGenerator::genDecomposeKey(const i8 *coeffs,
-                                        const Size coeffs_size,
-                                        std::optional<SecretKey> sk) const {
-    SwitchKey decompkey(context_, SWK_DECOMPOSE);
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genDecomposeKey(const i8 *coeffs,
+                                            const Size coeffs_size,
+                                            const SecretKey &sk) const {
+    SwitchKey decompkey(preset, SWK_DECOMPOSE);
     genDecomposeKeyInplace(coeffs, coeffs_size, decompkey, sk);
 
     return decompkey;
 }
 
-void KeyGenerator::genDecomposeKeyInplace(const SecretKey &sk_to,
-                                          SwitchKey &decompkey,
-                                          std::optional<SecretKey> sk) const {
+template <Preset P>
+void KeyGeneratorT<P>::genDecomposeKeyInplace(const SecretKey &sk_to,
+                                              SwitchKey &decompkey,
+                                              const SecretKey &sk) const {
     genDecomposeKeyInplace(sk_to.coeffs(), sk_to.coeffsSize(), decompkey, sk);
 }
-void KeyGenerator::genDecomposeKeyInplace(const std::vector<i8> coeffs,
-                                          SwitchKey &decompkey,
-                                          std::optional<SecretKey> sk) const {
+template <Preset P>
+void KeyGeneratorT<P>::genDecomposeKeyInplace(const std::vector<i8> coeffs,
+                                              SwitchKey &decompkey,
+                                              const SecretKey &sk) const {
     genDecomposeKeyInplace(coeffs.data(), static_cast<Size>(coeffs.size()),
                            decompkey, sk);
 }
-void KeyGenerator::genDecomposeKeyInplace(const i8 *coeffs,
-                                          const Size coeffs_size,
-                                          SwitchKey &decompkey,
-                                          std::optional<SecretKey> sk) const {
-    if (!sk.has_value())
-        sk = sk_;
-    checkSecretKey(context_, sk);
-    checkSwk(context_, decompkey, SWK_DECOMPOSE);
-    const Size num_secret = context_->get_num_secret();
-    const Size deg_ratio = context_->get_degree() / coeffs_size;
-    deb_assert(coeffs_size * deg_ratio == context_->get_degree(),
+template <Preset P>
+void KeyGeneratorT<P>::genDecomposeKeyInplace(const i8 *coeffs,
+                                              const Size coeffs_size,
+                                              SwitchKey &decompkey,
+                                              const SecretKey &sk) const {
+    checkSecretKey(preset, sk);
+    checkSwk(preset, decompkey, SWK_DECOMPOSE);
+    const Size deg_ratio = degree / coeffs_size;
+    deb_assert(coeffs_size * deg_ratio == degree,
                "[KeyGenerator::genDecomposeKey] "
                "The provided secret key has invalid size.");
-
-    deb_assert(decompkey.bxSize() == num_secret * decompkey.dnum() &&
+    deb_assert(num_secret == 1, "[KeyGenerator::genDecomposeKey] "
+                                "Decomposition key generation is only "
+                                "supported for single-secret presets.");
+    deb_assert(decompkey.bxSize() == decompkey.dnum() &&
                    decompkey.axSize() == decompkey.dnum(),
                "[KeyGenerator::genDecomposeKeyInplace] "
                "The provided switching key has invalid size.");
 
-    std::vector<i8> coeffs_embed(context_->get_degree(), 0);
+    std::vector<i8> coeffs_embed(degree, 0);
     for (Size i = 0; i < coeffs_size; ++i) {
         coeffs_embed[i * deg_ratio] = coeffs[i];
     }
-    SecretKey sk_to = SecretKeyGenerator::GenSecretKeyFromCoeff(
-        context_->get_preset(), coeffs_embed.data());
-    genSwitchingKey(sk->data(), sk_to.data(), decompkey.getAx().data(),
+    SecretKey sk_to =
+        SecretKeyGenerator::GenSecretKeyFromCoeff(preset, coeffs_embed.data());
+    genSwitchingKey(sk.data(), sk_to.data(), decompkey.getAx().data(),
                     decompkey.getBx().data());
+    // sk_to.zeroize(); // automatically zeroized when going out of scope
 }
 
-SwitchKey KeyGenerator::genDecomposeKey(const Preset preset_swk,
-                                        const SecretKey &sk_to,
-                                        std::optional<SecretKey> sk) const {
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genDecomposeKey(const Preset preset_swk,
+                                            const SecretKey &sk_to,
+                                            const SecretKey &sk) const {
     return genDecomposeKey(preset_swk, sk_to.coeffs(), sk_to.coeffsSize(), sk);
 }
-SwitchKey KeyGenerator::genDecomposeKey(const Preset preset_swk,
-                                        const std::vector<i8> coeffs,
-                                        std::optional<SecretKey> sk) const {
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genDecomposeKey(const Preset preset_swk,
+                                            const std::vector<i8> coeffs,
+                                            const SecretKey &sk) const {
     return genDecomposeKey(preset_swk, coeffs.data(),
                            static_cast<Size>(coeffs.size()), sk);
 }
-SwitchKey KeyGenerator::genDecomposeKey(const Preset preset_swk,
-                                        const i8 *coeffs, Size coeffs_size,
-                                        std::optional<SecretKey> sk) const {
-    Context context_swk = getContext(preset_swk);
-    SwitchKey decompkey(context_swk, SWK_DECOMPOSE);
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genDecomposeKey(const Preset preset_swk,
+                                            const i8 *coeffs, Size coeffs_size,
+                                            const SecretKey &sk) const {
+    SwitchKey decompkey(preset_swk, SWK_DECOMPOSE);
     genDecomposeKeyInplace(preset_swk, coeffs, coeffs_size, decompkey, sk);
     return decompkey;
 }
-void KeyGenerator::genDecomposeKeyInplace(const Preset preset_swk,
-                                          const SecretKey &sk_to,
-                                          SwitchKey &decompkey,
-                                          std::optional<SecretKey> sk) const {
+template <Preset P>
+void KeyGeneratorT<P>::genDecomposeKeyInplace(const Preset preset_swk,
+                                              const SecretKey &sk_to,
+                                              SwitchKey &decompkey,
+                                              const SecretKey &sk) const {
     genDecomposeKeyInplace(preset_swk, sk_to.coeffs(), sk_to.coeffsSize(),
                            decompkey, sk);
 }
-void KeyGenerator::genDecomposeKeyInplace(const Preset preset_swk,
-                                          const std::vector<i8> coeffs,
-                                          SwitchKey &decompkey,
-                                          std::optional<SecretKey> sk) const {
+template <Preset P>
+void KeyGeneratorT<P>::genDecomposeKeyInplace(const Preset preset_swk,
+                                              const std::vector<i8> coeffs,
+                                              SwitchKey &decompkey,
+                                              const SecretKey &sk) const {
     genDecomposeKeyInplace(preset_swk, coeffs.data(),
                            static_cast<Size>(coeffs.size()), decompkey, sk);
 }
-void KeyGenerator::genDecomposeKeyInplace(const Preset preset_swk,
-                                          const i8 *coeffs, Size coeffs_size,
-                                          SwitchKey &decompkey,
-                                          std::optional<SecretKey> sk) const {
-    if (!sk.has_value())
-        sk = sk_;
-    Context context_swk = getContext(preset_swk);
-    checkSecretKey(context_, sk);
-    checkSwk(context_swk, decompkey, SWK_DECOMPOSE);
-    deb_assert(
-        context_->get_degree() == context_swk->get_degree(),
-        "[KeyGenerator::genDecomposeKey] "
-        "Degree mismatch between KeyGenerator and switching key preset.");
+template <Preset P>
+void KeyGeneratorT<P>::genDecomposeKeyInplace(const Preset preset_swk,
+                                              const i8 *coeffs,
+                                              Size coeffs_size,
+                                              SwitchKey &decompkey,
+                                              const SecretKey &sk) const {
+    checkSecretKey(preset_swk, sk);
+    checkSwk(preset_swk, decompkey, SWK_DECOMPOSE);
+    deb_assert(degree == get_degree(preset_swk),
+               "[KeyGenerator::genDecomposeKey] "
+               "Degree mismatch between KeyGenerator and switching key "
+               "preset.");
 
-    const Size num_secret = context_swk->get_num_secret();
-    const Size deg_ratio = context_swk->get_degree() / coeffs_size;
-    deb_assert(coeffs_size * deg_ratio == context_->get_degree(),
+    const Size num_secret = get_num_secret(preset_swk);
+    const Size deg_ratio = get_degree(preset_swk) / coeffs_size;
+    deb_assert(coeffs_size * deg_ratio == degree,
                "[KeyGenerator::genDecomposeKey] "
                "The provided secret key has invalid size.");
-    deb_assert(decompkey.bxSize() == num_secret * decompkey.dnum() &&
+    deb_assert(num_secret == 1, "[KeyGenerator::genDecomposeKey] "
+                                "Decomposition key generation is only "
+                                "supported for single-secret presets.");
+    deb_assert(decompkey.bxSize() == decompkey.dnum() &&
                    decompkey.axSize() == decompkey.dnum(),
                "[KeyGenerator::genDecomposeKeyInplace] "
                "The provided switching key has invalid size.");
 
-    std::vector<i8> coeffs_embed(context_->get_degree(), 0);
+    std::vector<i8> coeffs_embed(degree, 0);
     for (Size i = 0; i < coeffs_size; ++i) {
         coeffs_embed[i * deg_ratio] = coeffs[i];
     }
     SecretKey sk_to = SecretKeyGenerator::GenSecretKeyFromCoeff(
-        context_swk->get_preset(), coeffs_embed.data());
-    SecretKey sk_from = SecretKeyGenerator::GenSecretKeyFromCoeff(
-        context_swk->get_preset(), sk->coeffs());
+        preset_swk, coeffs_embed.data());
+    SecretKey sk_from =
+        SecretKeyGenerator::GenSecretKeyFromCoeff(preset_swk, sk.coeffs());
     KeyGenerator keygen_swk(preset_swk);
     keygen_swk.genSwitchingKey(sk_from.data(), sk_to.data(),
                                decompkey.getAx().data(),
                                decompkey.getBx().data());
+    // sk_to.zeroize(); // automatically zeroized when going out of scope
+    // sk_from.zeroize(); // automatically zeroized when going out of scope
 }
 
+template <Preset P>
 std::vector<SwitchKey>
-KeyGenerator::genModPackKeyBundle(const SecretKey &sk_from,
-                                  const SecretKey &sk_to) const {
+KeyGeneratorT<P>::genModPackKeyBundle(const SecretKey &sk_from,
+                                      const SecretKey &sk_to) const {
     std::vector<SwitchKey> key_bundle;
-    const auto num_key = getContext(sk_from.preset())->get_rank() /
-                         getContext(sk_to.preset())->get_rank();
+    const auto num_key = get_rank(sk_from.preset()) / get_rank(sk_to.preset());
     for (u64 i = 0; i < num_key; ++i) {
-        key_bundle.emplace_back(context_, SWK_MODPACK);
+        key_bundle.emplace_back(preset, SWK_MODPACK);
     }
 
     genModPackKeyBundleInplace(sk_from, sk_to, key_bundle);
     return key_bundle;
 }
 
-void KeyGenerator::genModPackKeyBundleInplace(
+template <Preset P>
+void KeyGeneratorT<P>::genModPackKeyBundleInplace(
     const SecretKey &sk_from, const SecretKey &sk_to,
     std::vector<SwitchKey> &key_bundle) const {
     deb_assert(sk_from[0][0].isNTT() == sk_to[0][0].isNTT(),
                "[KeyGenerator::genModPackKeyBundle] "
                "NTT state mismatch between input secret keys.");
+    deb_assert(
+        get_num_secret(sk_from.preset()) * get_num_secret(sk_to.preset()) == 1,
+        "[KeyGenerator::genModPackKeyBundle] "
+        "ModPackKeyBundle is only supported for single-secret presets.");
 
-    const auto context_from = getContext(sk_from.preset());
-    const auto context_to = getContext(sk_to.preset());
-    checkModPackKeyBundleCondition(context_, context_from, context_to);
+    const auto preset_from = sk_from.preset();
+    const auto preset_to = sk_to.preset();
+    checkModPackKeyBundleCondition(preset, preset_from, preset_to);
 
-    [[maybe_unused]] const Size num_secret = context_->get_num_secret();
-    const u64 from_deg = context_from->get_degree();
-    const u64 from_rank = context_from->get_rank();
-    const u64 to_deg = context_to->get_degree();
-    const u64 to_rank = context_to->get_rank();
-    const u64 rlwe_deg = context_->get_degree();
+    const u64 from_deg = get_degree(preset_from);
+    const u64 from_rank = get_rank(preset_from);
+    const u64 to_deg = get_degree(preset_to);
+    const u64 to_rank = get_rank(preset_to);
+    const u64 rlwe_deg = degree;
     const u64 num_keys = from_rank / to_rank;
     const u64 deg_ratio = rlwe_deg / from_deg;
-
     deb_assert(key_bundle.size() == num_keys,
                "[KeyGenerator::genModPackKeyBundle] "
                "The provided switching key bundle has invalid size.");
+
     const i8 *sk_from_coeff = sk_from.coeffs();
     const i8 *sk_to_coeff = sk_to.coeffs();
     auto *rlwe_coeff = new i8[rlwe_deg];
@@ -578,8 +619,8 @@ void KeyGenerator::genModPackKeyBundleInplace(
         for (u64 k = 0; k < to_deg; ++k)
             rlwe_coeff[j + to_rank * k] = sk_to_coeff[k + to_deg * j];
 
-    SecretKey sk_to_rlwe = SecretKeyGenerator::GenSecretKeyFromCoeff(
-        context_->get_preset(), rlwe_coeff);
+    SecretKey sk_to_rlwe =
+        SecretKeyGenerator::GenSecretKeyFromCoeff(preset, rlwe_coeff);
 
     for (u64 i = 0; i < num_keys; ++i) {
         // from_deg * (from_rank / num_keys) -> rlwe_deg ; embed and combine
@@ -597,36 +638,39 @@ void KeyGenerator::genModPackKeyBundleInplace(
             for (u64 k = 0; k < from_deg; ++k)
                 rlwe_coeff[j + deg_ratio * k] =
                     sk_from_coeff[k + from_deg * (j + to_rank * i)];
-        SecretKey sk_from_rlwe = SecretKeyGenerator::GenSecretKeyFromCoeff(
-            context_->get_preset(), rlwe_coeff);
+        SecretKey sk_from_rlwe =
+            SecretKeyGenerator::GenSecretKeyFromCoeff(preset, rlwe_coeff);
         genSwitchingKey(sk_from_rlwe.data(), sk_to_rlwe.data(),
                         key_bundle[i].getAx().data(),
                         key_bundle[i].getBx().data());
+        // sk_from_rlwe.zeroize(); // automatically zeroized when going out of
+        // scope
     }
+    deb_secure_zero(rlwe_coeff, rlwe_deg * sizeof(i8));
     delete[] rlwe_coeff;
 }
 
-SwitchKey KeyGenerator::genModPackKeyBundle(const Size pad_rank,
-                                            std::optional<SecretKey> sk) const {
-    SwitchKey modkey(context_, SWK_MODPACK_SELF);
-    const auto max_length = context_->get_num_p();
+template <Preset P>
+SwitchKey KeyGeneratorT<P>::genModPackKeyBundle(const Size pad_rank,
+                                                const SecretKey &sk) const {
+    SwitchKey modkey(preset, SWK_MODPACK_SELF);
+    const auto max_length = num_p;
     modkey.addAx(max_length, pad_rank, true);
-    modkey.addBx(max_length, pad_rank * context_->get_num_secret(), true);
+    modkey.addBx(max_length, pad_rank * num_secret, true);
     genModPackKeyBundleInplace(pad_rank, modkey, sk);
     return modkey;
 }
-void KeyGenerator::genModPackKeyBundleInplace(
-    const Size pad_rank, SwitchKey &modkey, std::optional<SecretKey> sk) const {
-    if (!sk.has_value())
-        sk = sk_;
-    checkSecretKey(context_, sk);
-    checkSwk(context_, modkey, SWK_MODPACK_SELF);
-    const Size items_per_ctxt = context_->get_degree() / pad_rank;
-    const Size degree = context_->get_degree();
-    deb_assert(
-        utils::isPowerOfTwo(pad_rank),
-        "[KeyGenerator::genModPackKeyBundle] pad_rank must be a power of two.");
-    deb_assert(modkey.bxSize() == pad_rank * context_->get_num_secret() &&
+template <Preset P>
+void KeyGeneratorT<P>::genModPackKeyBundleInplace(const Size pad_rank,
+                                                  SwitchKey &modkey,
+                                                  const SecretKey &sk) const {
+    checkSecretKey(preset, sk);
+    checkSwk(preset, modkey, SWK_MODPACK_SELF);
+    const Size items_per_ctxt = degree / pad_rank;
+    deb_assert(utils::isPowerOfTwo(pad_rank),
+               "[KeyGenerator::genModPackKeyBundle] pad_rank must be a power "
+               "of two.");
+    deb_assert(modkey.bxSize() == pad_rank * num_secret &&
                    modkey.axSize() == pad_rank,
                "[KeyGenerator::genModPackKeyBundle] The provided switching key "
                "has invalid size.");
@@ -636,24 +680,26 @@ void KeyGenerator::genModPackKeyBundleInplace(
         std::memset(from_coeff, 0, degree);
         for (Size j = 0; j < items_per_ctxt; ++j) {
             from_coeff[pad_rank * j] =
-                sk->coeffs()[j * pad_rank + pad_rank - 1 - i];
+                sk.coeffs()[j * pad_rank + pad_rank - 1 - i];
         }
         SecretKey sk_from =
-            SecretKeyGenerator::GenSecretKeyFromCoeff(sk->preset(), from_coeff);
-        genSwitchingKey(sk_from.data(), sk->data(), &(modkey.ax(i)),
-                        &(modkey.bx(i)), 1, context_->get_num_secret());
+            SecretKeyGenerator::GenSecretKeyFromCoeff(sk.preset(), from_coeff);
+        genSwitchingKey(sk_from.data(), sk.data(), &(modkey.ax(i)),
+                        &(modkey.bx(i)), 1, num_secret);
+        deb_secure_zero(from_coeff, degree * sizeof(i8));
         delete[] from_coeff;
+        // sk_from.zeroize(); // automatically zeroized when going out of scope
     }
 }
 
-void KeyGenerator::frobeniusMapInNTT(const Polynomial &op, const i32 pow,
-                                     Polynomial res) const {
+template <Preset P>
+void KeyGeneratorT<P>::frobeniusMapInNTT(const Polynomial &op, const i32 pow,
+                                         Polynomial res) const {
     deb_assert(op[0].isNTT(), "[KeyGenerator::frobeniusMapInNTT] "
                               "Input polynomial must be in NTT state.");
     deb_assert(pow % 2 != 0, "[KeyGenerator::frobeniusMapInNTT] "
                              "Frobenius map power must be odd.");
 
-    Size degree = context_->get_degree();
     u64 log_degree = utils::log2floor(static_cast<u64>(degree));
 
     if (pow == 1) {
@@ -688,52 +734,53 @@ void KeyGenerator::frobeniusMapInNTT(const Polynomial &op, const i32 pow,
     }
 }
 
-Polynomial KeyGenerator::sampleGaussian(const Size num_polyunit,
-                                        bool do_ntt) const {
-    const auto degree = context_->get_degree();
+template <Preset P>
+Polynomial KeyGeneratorT<P>::sampleGaussian(const Size num_polyunit,
+                                            bool do_ntt) const {
     std::vector<i64> samples(degree);
-    alea_sample_gaussian_int64_array(as_.get(), samples.data(), degree,
-                                     context_->get_gaussian_error_stdev());
-    Polynomial poly(context_, num_polyunit);
+    rng_->sampleGaussianInt64Array(samples.data(), degree,
+                                   gaussian_error_stdev);
+    Polynomial poly(preset, num_polyunit);
     for (Size i = 0; i < poly.size(); ++i) {
-        poly[i].setPrime(context_->get_primes()[i]);
-        for (Size j = 0; j < context_->get_degree(); ++j) {
+        poly[i].setPrime(primes[i]);
+        for (Size j = 0; j < degree; ++j) {
             // Convert int64_t sample to u64
-            poly[i][j] = (samples[j] >= 0) ? static_cast<u64>(samples[j])
-                                           : context_->get_primes()[i] -
-                                                 static_cast<u64>(-samples[j]);
+            poly[i][j] = (samples[j] >= 0)
+                             ? static_cast<u64>(samples[j])
+                             : primes[i] - static_cast<u64>(-samples[j]);
         }
     }
 
     if (do_ntt) {
-        forwardNTT(modarith_, poly);
+        forwardNTT(modarith, poly);
     }
     return poly;
 }
 
-void KeyGenerator::sampleUniform(Polynomial &poly) const {
+template <Preset P>
+void KeyGeneratorT<P>::sampleUniform(Polynomial &poly) const {
     // TODO: add reseed controller
     for (u64 i = 0; i < poly.size(); ++i) {
-        alea_get_random_uint64_array_in_range(
-            as_.get(), poly[i].data(), context_->get_degree(), poly[i].prime());
+        rng_->getRandomUint64ArrayInRange(poly[i].data(), degree,
+                                          poly[i].prime());
     }
 }
 
-void KeyGenerator::computeConst() {
-    const Size length = context_->get_num_base() + context_->get_num_qp();
-    const Size dnum = context_->get_gadget_rank();
+template <Preset P> void KeyGeneratorT<P>::computeConst() {
+    const Size length = num_base + num_qp;
+    const Size dnum = gadget_rank;
     const Size alpha = (length + dnum - 1) / dnum;
 
     p_mod_.resize(length);
     for (Size i = 0; i < length; ++i) {
-        const u64 prime = context_->get_primes()[i];
+        const u64 prime = primes[i];
         const u64 two_prime = prime << 1;
         u64 p = UINT64_C(1);
 
-        for (Size j = 0; j < context_->get_num_tp(); ++j) {
-            const u64 pp = modarith_[i].reduceBarrett<2>(
-                context_->get_primes()[j + length]);
-            p = modarith_[i].mul(p, pp);
+        for (Size j = 0; j < num_tp; ++j) {
+            const u64 pp =
+                modarith[i].template reduceBarrett<2>(primes[j + length]);
+            p = modarith[i].mul(p, pp);
         }
         p = utils::subIfGE(p, two_prime);
         p_mod_[i] = utils::subIfGE(p, prime);
@@ -744,15 +791,14 @@ void KeyGenerator::computeConst() {
 
     for (Size i = 0; i < length; ++i) {
         const u64 beta = i / alpha;
-        const u64 prime = context_->get_primes()[i];
+        const u64 prime = primes[i];
         const u64 two_prime = prime << 1;
         u64 hat_q = UINT64_C(1);
 
         for (Size j = 0; j < length; ++j) {
             if (j < beta * alpha || j >= (beta + 1) * alpha) {
-                u64 pp =
-                    modarith_[i].reduceBarrett<2>(context_->get_primes()[j]);
-                hat_q = modarith_[i].mul(hat_q, pp);
+                u64 pp = modarith[i].template reduceBarrett<2>(primes[j]);
+                hat_q = modarith[i].mul(hat_q, pp);
             }
         }
 
@@ -760,7 +806,11 @@ void KeyGenerator::computeConst() {
         hat_q = utils::subIfGE(hat_q, prime);
 
         hat_q_i_mod_[i] = hat_q;
-        hat_q_i_inv_mod_[i] = modarith_[i].inverse(hat_q);
+        hat_q_i_inv_mod_[i] = modarith[i].inverse(hat_q);
     }
 }
+
+#define X(preset) template class KeyGeneratorT<PRESET_##preset>;
+PRESET_LIST_WITH_EMPTY
+#undef X
 } // namespace deb

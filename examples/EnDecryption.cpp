@@ -1,5 +1,5 @@
 /*
-* Copyright 2025 CryptoLab, Inc.
+* Copyright 2026 CryptoLab, Inc.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -25,7 +25,7 @@ int main() {
     Preset preset = PRESET_EMPTY;
     // Retrieve preset with single secret
     for (auto p : Presets) {
-        if (getContext(p)->get_num_secret() == 1) {
+        if (get_num_secret(p) == 1) {
             preset = p;
             break;
         }
@@ -34,7 +34,7 @@ int main() {
         std::cerr << "No preset with single secret found." << std::endl;
         return -1;
     }
-    std::cout << "Preset: " << getContext(preset)->get_preset_name() << std::endl;
+    std::cout << "Preset: " << get_preset_name(preset) << std::endl;
     Encryptor enc(preset); // Create encryptor
     Decryptor dec(preset); // Create decryptor
     Message msg(preset); // Message to be encrypted
@@ -60,7 +60,7 @@ int main() {
     }
 
     // Scaled encryption and decryption
-    u64 base_bit = utils::bitWidth(getContext(preset)->get_primes()[0]); // Example scale
+    u64 base_bit = utils::bitWidth(get_primes(preset)[0]); // Example scale
     Real scale = std::pow(2.0, base_bit - 3);
     {
         auto opt = EncryptOptions().Scale(scale);
@@ -72,7 +72,7 @@ int main() {
     }
 
     // Encrypt with custom level
-    Size custom_level = getContext(preset)->get_encryption_level() / 2;
+    Size custom_level = get_encryption_level(preset) / 2;
     {
         auto opt = EncryptOptions().Level(custom_level);
         DebTimer::start("Custom Level EnDecryption");
@@ -130,7 +130,7 @@ int main() {
     // (Coefficient) Message encryption with encryption key
     // ---------------------------------------------------------------------
     // Generate encryption key from secret key
-    KeyGenerator keygen(sk);
+    KeyGenerator keygen(preset);
     SwitchKey ek = keygen.genEncKey(sk);
 
     // Basic encryption with encryption key

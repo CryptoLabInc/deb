@@ -25,13 +25,22 @@
       "installDir": "${sourceDir}/build/install",
       "cacheVariables": {
         "DEB_BUILD_TEST": "ON",
-        "DEB_BUILD_BENCHMARK": "ON",
+        "DEB_BUILD_EXAMPLES": "OFF",
+        "DEB_BUILD_BENCHMARK": "OFF",
         "DEB_BUILD_WITH_OMP": "ON"
       }
     },
     {
       "name": "ci-mac",
       "inherits": "ci",
+      "cacheVariables": {
+        "DEB_BUILD_WITH_OMP": "OFF"
+      }
+    },
+    {
+      "name": "ci-win",
+      "inherits": "ci",
+      "generator": "Ninja",
       "cacheVariables": {
         "DEB_BUILD_WITH_OMP": "OFF"
       }
@@ -66,6 +75,8 @@
       "inherits": "release",
       "cacheVariables": {
         "DEB_RUNTIME_RESOURCE_CHECK": "OFF",
+        "DEB_BUILD_EXAMPLES": "OFF",
+        "DEB_BUILD_TEST": "OFF",
         "DEB_BUILD_BENCHMARK": "ON",
         "DEB_BUILD_WITH_OMP": "ON"
       }
@@ -91,6 +102,12 @@
     {
       "name": "ci-mac",
       "configurePreset": "ci-mac",
+      "configuration": "release",
+      "jobs": 4
+    },
+    {
+      "name": "ci-win",
+      "configurePreset": "ci-win",
       "configuration": "release",
       "jobs": 4
     },
@@ -124,7 +141,7 @@
         "noTestsAction": "error"
       },
       "environment": {
-        "OMP_NUM_THREADS": "8"
+        "OMP_NUM_THREADS": "1"
       }
     },
     {

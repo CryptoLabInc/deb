@@ -1,5 +1,5 @@
 # ~~~
-# Copyright 2025 CryptoLab, Inc.
+# Copyright 2026 CryptoLab, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,7 +14,7 @@
 # limitations under the License.
 # ~~~
 
-function(set_my_project_warnings target)
+function(set_deb_warnings target)
   target_compile_options(
     ${target}
     PRIVATE

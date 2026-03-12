@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,9 +16,8 @@
 
 #pragma once
 
-#include "Context.hpp"
+#include "Preset.hpp"
 #include "SeedGenerator.hpp"
-#include "Types.hpp"
 
 #include <algorithm>
 #include <complex>
@@ -34,7 +33,7 @@ namespace deb {
  */
 template <typename DataT> using ComplexT = std::complex<DataT>;
 /**
- * @brief Default complex type using @ref Real precision.
+ * @brief Default complex type using @ref Real (double) precision.
  */
 using Complex = ComplexT<Real>;
 
@@ -55,20 +54,9 @@ public:
      */
     explicit MessageBase(const Preset preset) {
         if constexpr (EncodeT == EncodingType::SLOT) {
-            data_.resize(getContext(preset)->get_num_slots());
+            data_.resize(get_num_slots(preset));
         } else if constexpr (EncodeT == EncodingType::COEFF) {
-            data_.resize(getContext(preset)->get_degree());
-        }
-    }
-    /**
-     * @brief Allocates storage based on a shared context.
-     * @param context Shared context that exposes preset metadata.
-     */
-    explicit MessageBase(const Context &context) {
-        if constexpr (EncodeT == EncodingType::SLOT) {
-            data_.resize(context->get_num_slots());
-        } else if constexpr (EncodeT == EncodingType::COEFF) {
-            data_.resize(context->get_degree());
+            data_.resize(get_degree(preset));
         }
     }
     /**
@@ -126,7 +114,9 @@ template <typename DataT>
 using CoeffMessageImpl = MessageBase<EncodingType::COEFF, DataT>;
 
 using Message = MessageImpl<Real>;
+using FMessage = MessageImpl<float>;
 using CoeffMessage = CoeffMessageImpl<Real>;
+using FCoeffMessage = CoeffMessageImpl<float>;
 
 #define DECL_MESSAGE_TEMPLATE(encode_t, data_t, prefix)                        \
     prefix template MessageBase<encode_t, data_t>::MessageBase(                \
@@ -148,7 +138,9 @@ using CoeffMessage = CoeffMessageImpl<Real>;
 
 #define MESSAGE_TYPE_TEMPLATE(prefix)                                          \
     DECL_MESSAGE_TEMPLATE(EncodingType::SLOT, ComplexT<Real>, prefix)          \
-    DECL_MESSAGE_TEMPLATE(EncodingType::COEFF, Real, prefix)
+    DECL_MESSAGE_TEMPLATE(EncodingType::SLOT, ComplexT<float>, prefix)         \
+    DECL_MESSAGE_TEMPLATE(EncodingType::COEFF, Real, prefix)                   \
+    DECL_MESSAGE_TEMPLATE(EncodingType::COEFF, float, prefix)
 
 MESSAGE_TYPE_TEMPLATE(extern)
 
@@ -163,20 +155,20 @@ public:
      * @brief Initializes the unit for a preset at a specific modulus level.
      * @param preset Preset describes modulus chain metadata.
      * @param level Target modulus index.
+     * @param alloc True to allocate storage, false to create an zero-allocated
+     * object.
      */
-    explicit PolyUnit(const Preset preset, const Size level);
-    /**
-     * @brief Initializes the unit using a shared context.
-     * @param context Shared context that exposes metadata.
-     * @param level Target modulus index.
-     */
-    explicit PolyUnit(const Context &context, const Size level);
+    explicit PolyUnit(const Preset preset, const Size level,
+                      const bool alloc = true);
+
     /**
      * @brief Constructs a unit with explicit modulus and degree configuration.
      * @param prime Prime modulus value.
      * @param degree Number of coefficients.
+     * @param alloc True to allocate storage, false to create an zero-allocated
+     * object.
      */
-    explicit PolyUnit(u64 prime, Size degree);
+    explicit PolyUnit(u64 prime, Size degree, const bool alloc = true);
 
     /**
      * @brief Creates a full copy of the unit including coefficient storage.
@@ -208,16 +200,16 @@ public:
      * @brief Mutable coefficient accessor without bounds checks.
      * @param index Coefficient index.
      */
-    u64 &operator[](Size index) noexcept;
+    u64 &operator[](Size index) noexcept { return data_ptr_.get()[index]; }
     /**
      * @brief Const coefficient accessor without bounds checks.
      * @param index Coefficient index.
      */
-    u64 operator[](Size index) const noexcept;
+    u64 operator[](Size index) const noexcept { return data_ptr_.get()[index]; }
     /**
      * @brief Returns a mutable pointer to coefficient storage.
      */
-    u64 *data() const noexcept;
+    u64 *data() const noexcept { return data_ptr_.get(); }
     /**
      * @brief Sets an externally managed storage buffer.
      * @param new_data Pointer to caller-managed coefficients.
@@ -228,7 +220,8 @@ public:
 private:
     u64 prime_;
     bool ntt_state_;
-    std::shared_ptr<span<u64>> data_;
+    Size degree_;
+    std::shared_ptr<u64[]> data_ptr_;
 };
 
 /**
@@ -247,18 +240,11 @@ public:
      */
     explicit Polynomial(const Preset preset, const bool full_level = false);
     /**
-     * @brief Constructs with a shared context handle.
-     * @param context Shared context that exposes metadata.
-     * @param full_level True to allocate every modulus level,
-     * false to allocate only the default encryption level.
-     */
-    explicit Polynomial(Context context, const bool full_level = false);
-    /**
      * @brief Constructs with a custom number of PolyUnit entries.
-     * @param context Shared context that exposes metadata.
+     * @param preset Preset that describes modulus chain metadata.
      * @param custom_size Number of PolyUnit slots.
      */
-    explicit Polynomial(Context context, const Size custom_size);
+    explicit Polynomial(const Preset preset, const Size custom_size);
     /**
      * @brief Copies slices of another polynomial.
      * @param other Source polynomial.
@@ -301,23 +287,32 @@ public:
      * @brief Mutable PolyUnit accessor.
      * @param index PolyUnit index.
      */
-    PolyUnit &operator[](size_t index) noexcept;
+    PolyUnit &operator[](size_t index) noexcept { return polyunits_[index]; }
     /**
      * @brief Read-only PolyUnit accessor.
      * @param index PolyUnit index.
      */
-    const PolyUnit &operator[](size_t index) const noexcept;
+    const PolyUnit &operator[](size_t index) const noexcept {
+        return polyunits_[index];
+    }
     /**
      * @brief Mutable pointer to the first PolyUnit.
      */
-    PolyUnit *data() noexcept;
+    PolyUnit *data() noexcept { return polyunits_.data(); }
     /**
      * @brief Const pointer to the first PolyUnit.
      */
-    const PolyUnit *data() const noexcept;
+    const PolyUnit *data() const noexcept { return polyunits_.data(); }
 
 private:
-    std::vector<PolyUnit> data_;
+    std::vector<PolyUnit> polyunits_;
+
+    /**
+     * @brief Consecutive data pointer to allocated and deallocated by this
+     * Polynomial. If nullptr, the data is managed externally (or by polyunits_
+     * themselves).
+     */
+    std::shared_ptr<u64[]> dealloc_ptr_;
 };
 
 /**
@@ -331,10 +326,6 @@ public:
      */
     explicit Ciphertext(const Preset preset);
     /**
-     * @brief Allocates ciphertext metadata using a shared context.
-     */
-    explicit Ciphertext(Context context);
-    /**
      * @brief Allocates ciphertext with explicit level and number of
      * polynomials.
      * @param preset Preset that describes modulus chain metadata.
@@ -342,14 +333,6 @@ public:
      * @param num_poly Optional number of component polynomials.
      */
     explicit Ciphertext(const Preset preset, const Size level,
-                        std::optional<Size> num_poly = std::nullopt);
-    /**
-     * @brief Context-based overload selecting level and size.
-     * @param context Shared context that exposes metadata.
-     * @param level Target modulus index.
-     * @param num_poly Optional number of component polynomials.
-     */
-    explicit Ciphertext(Context context, const Size level,
                         std::optional<Size> num_poly = std::nullopt);
     /**
      * @brief Copies a subset of another ciphertext.
@@ -413,20 +396,22 @@ public:
      * @brief Mutable polynomial accessor.
      * @param index Polynomial index.
      */
-    Polynomial &operator[](size_t index) noexcept;
+    Polynomial &operator[](size_t index) noexcept { return polys_[index]; }
     /**
      * @brief Const polynomial accessor.
      * @param index Polynomial index.
      */
-    const Polynomial &operator[](size_t index) const noexcept;
+    const Polynomial &operator[](size_t index) const noexcept {
+        return polys_[index];
+    }
     /**
      * @brief Mutable pointer to polynomial storage.
      */
-    Polynomial *data() noexcept;
+    Polynomial *data() noexcept { return polys_.data(); }
     /**
      * @brief Const pointer to polynomial storage.
      */
-    const Polynomial *data() const noexcept;
+    const Polynomial *data() const noexcept { return polys_.data(); }
 
 private:
     Preset preset_;
@@ -439,7 +424,21 @@ private:
  */
 class SecretKey {
 public:
+    /**
+     * @brief Default constructor is deleted to prevent accidental creation of
+     * sensitive key material.
+     */
     SecretKey() = delete;
+    /**
+     * @brief Copy constructor is deleted to prevent accidental copying of
+     * sensitive key material.
+     */
+    SecretKey(const SecretKey &other) = delete;
+    /**
+     * @brief Copy assignment operator is deleted to prevent accidental copying
+     * of sensitive key material.
+     */
+    SecretKey &operator=(const SecretKey &other) = delete;
     /**
      * @brief Deterministic constructor from preset and PRNG seed.
      * @param preset Preset that describes modulus chain metadata.
@@ -453,6 +452,13 @@ public:
      */
     explicit SecretKey(Preset preset, bool embedding = true);
 
+    SecretKey(SecretKey &&) noexcept;
+    SecretKey &operator=(SecretKey &&) noexcept;
+
+    /**
+     * @brief Destructor that securely zeroes all sensitive key material.
+     */
+    ~SecretKey() noexcept;
     /**
      * @brief Preset used to generate this key.
      */
@@ -474,7 +480,20 @@ public:
      * @brief Removes the stored seed to prevent future regenerations.
      */
     void flushSeed() noexcept;
-
+    /**
+     * @brief Securely zeroes all sensitive key material in place.
+     *
+     * Zeros @ref coeffs_, the stored @ref seed_, and every PolyUnit
+     * coefficient buffer inside @ref polys_ using the secure-zero backend
+     * selected by @c DEB_EXT_LIB_FOR_SECURE_ZERO at build time:
+     *  - @c LIBSODIUM  → @c sodium_memzero
+     *  - @c OPENSSL    → @c OPENSSL_cleanse
+     *  - @c NATIVE     → @c explicit_bzero / @c SecureZeroMemory / volatile
+     * byte loop
+     *  - @c NONE       → @c memset (not secure, included for testing purposes
+     * only)
+     */
+    void zeroize() noexcept;
     /**
      * @brief Number of raw coefficients currently allocated.
      */
@@ -501,7 +520,6 @@ public:
      * @brief Const pointer to coefficient array.
      */
     const i8 *coeffs() const noexcept;
-
     /**
      * @brief Number of stored polynomial components.
      */
@@ -515,20 +533,20 @@ public:
      * @brief Mutable polynomial accessor.
      * @param index Polynomial index.
      */
-    Polynomial &operator[](Size index);
+    Polynomial &operator[](Size index) { return polys_[index]; }
     /**
      * @brief Const polynomial accessor.
      * @param index Polynomial index.
      */
-    const Polynomial &operator[](Size index) const;
+    const Polynomial &operator[](Size index) const { return polys_[index]; }
     /**
      * @brief Mutable pointer to polynomial array.
      */
-    Polynomial *data() noexcept;
+    Polynomial *data() noexcept { return polys_.data(); }
     /**
      * @brief Const pointer to polynomial array.
      */
-    const Polynomial *data() const noexcept;
+    const Polynomial *data() const noexcept { return polys_.data(); }
 
 private:
     Preset preset_;
@@ -551,15 +569,6 @@ public:
      */
     explicit SwitchKey(Preset preset, const SwitchKeyKind type,
                        const std::optional<Size> rot_idx = std::nullopt);
-    /**
-     * @brief Constructs a switching key from a context and key kind.
-     * @param context Shared context that exposes metadata.
-     * @param type SwitchKeyKind (SWK_MULT, SWK_ROT, etc).
-     * @param rot_idx Optional rotation index.
-     */
-    explicit SwitchKey(const Context &context, const SwitchKeyKind type,
-                       const std::optional<Size> rot_idx = std::nullopt);
-
     /**
      * @brief Returns the preset metadata for this key.
      */
@@ -689,7 +698,7 @@ private:
  * @throws std::out_of_range if indices are invalid.
  */
 inline u64 *getData(const Ciphertext &cipher, const Size polyunit_idx,
-                    const Size poly_idx = 0) {
+                    const Size poly_idx) {
     if (poly_idx >= cipher.numPoly() ||
         polyunit_idx >= cipher[poly_idx].size()) {
         throw std::out_of_range("Index out of range in getData");
@@ -697,13 +706,13 @@ inline u64 *getData(const Ciphertext &cipher, const Size polyunit_idx,
     return cipher[poly_idx][polyunit_idx].data();
 }
 
-inline u64 *getData(const Polynomial &poly, const Size polyunit_idx = 0) {
+inline u64 *getData(const Polynomial &poly, const Size polyunit_idx) {
     if (polyunit_idx >= poly.size()) {
         throw std::out_of_range("Index out of range in getData");
     }
     return poly[polyunit_idx].data();
 }
 
-inline u64 getData(const u64 *data, const Size idx = 0) { return data[idx]; }
+inline u64 getData(const u64 *data, const Size idx) { return data[idx]; }
 
 } // namespace deb

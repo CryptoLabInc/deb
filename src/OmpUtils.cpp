@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,40 +14,22 @@
  * limitations under the License.
  */
 
-#include "Context.hpp"
-#include "utils/Basic.hpp"
+#include "utils/OmpUtils.hpp"
 
-#include <cmath>
+#include <cstdlib>
 #ifdef DEB_OPENMP
 #include <omp.h>
 #endif
 
-namespace deb {
-// Mapping from preset enum to preset struct
-Context getContext(Preset preset) {
-    return ContextPool::GetInstance().get(preset);
-}
-
-bool isValidPreset([[maybe_unused]] Preset preset) {
-#ifdef DEB_RESOURCE_CHECK
-    switch (preset) {
-#define X(NAME) case PRESET_##NAME:
-        PRESET_LIST
-        return true;
-#undef X
-    case PRESET_EMPTY:
-    default:
-        return false;
-    }
-    return false;
-#else
-    return true;
-#endif
-}
+namespace deb::utils {
+static int g_omp_threads = -1;
 
 void setOmpThreadLimit([[__maybe_unused__]] int max_threads) {
 #ifdef DEB_OPENMP
     int current = omp_get_max_threads();
+    if (g_omp_threads == -1) {
+        g_omp_threads = current;
+    }
     if (max_threads < current) {
         omp_set_num_threads(max_threads);
     }
@@ -56,8 +38,17 @@ void setOmpThreadLimit([[__maybe_unused__]] int max_threads) {
 
 void unsetOmpThreadLimit() {
 #ifdef DEB_OPENMP
-    omp_set_num_threads(omp_get_max_threads());
+    if (g_omp_threads != -1) {
+        omp_set_num_threads(g_omp_threads);
+        g_omp_threads = -1;
+    } else {
+        const char *env_p = std::getenv("OMP_NUM_THREADS");
+        if (env_p != nullptr) {
+            int env_threads = std::atoi(env_p);
+            omp_set_num_threads(env_threads);
+        }
+    }
 #endif
 }
 
-} // namespace deb
+} // namespace deb::utils

@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,14 +17,11 @@
 #pragma once
 
 #include "CKKSTypes.hpp"
-#include "Constant.hpp"
-#include "Context.hpp"
-#include "SeedGenerator.hpp"
 #include "utils/Basic.hpp"
+#include "utils/Constant.hpp"
 #include "utils/FFT.hpp"
-#include "utils/ModArith.hpp"
-
-#include "alea/alea.h"
+#include "utils/PresetTraits.hpp"
+#include "utils/RandomGenerator.hpp"
 
 #include <cstring>
 #include <optional>
@@ -38,8 +35,8 @@ namespace deb {
  * @brief Configures optional behaviors for encryption routines.
  */
 struct EncryptOptions {
-    Real scale = 0;            /**< Requested plaintext scale (0 = auto). */
-    Size level = DEB_MAX_SIZE; /**< Encryption level override. */
+    Real scale = 0; /**< Requested plaintext scale (0 = auto). */
+    Size level = utils::DEB_MAX_SIZE; /**< Encryption level override. */
     bool ntt_out = true; /**< Whether ciphertext output stays in NTT form. */
     /**
      * @brief Sets the desired scale value.
@@ -72,20 +69,31 @@ struct EncryptOptions {
 
 [[maybe_unused]] static EncryptOptions default_opt;
 
-// TODO: make template for Encryptor
-// to support constexpr functions with various presets
 /**
  * @brief Provides CKKS encoding and encryption routines.
  */
-class Encryptor {
+template <Preset P = PRESET_EMPTY> class EncryptorT : public PresetTraits<P> {
+#define CV(type, var_name) using PresetTraits<P>::var_name;
+    CONST_LIST
+#undef CV
+    using PresetTraits<P>::modarith;
+
 public:
     /**
      * @brief Constructs an encryptor bound to a preset and optional RNG seed.
      * @param preset Target preset.
      * @param seeds Optional deterministic seed.
      */
-    explicit Encryptor(const Preset preset,
-                       std::optional<const RNGSeed> seeds = std::nullopt);
+    explicit EncryptorT(std::optional<const RNGSeed> seeds = std::nullopt);
+    explicit EncryptorT(Preset actual_preset,
+                        std::optional<const RNGSeed> seeds = std::nullopt);
+    /**
+     * @brief Constructs an encryptor with a custom random generator.
+     * @param actual_preset Target preset.
+     * @param rng Custom random generator instance.
+     */
+    explicit EncryptorT(Preset actual_preset,
+                        std::shared_ptr<RandomGenerator> rng);
 
     template <typename MSG, typename KEY,
               std::enable_if_t<!std::is_pointer_v<std::decay_t<MSG>>, int> = 0>
@@ -128,10 +136,7 @@ private:
     void innerEncrypt([[maybe_unused]] const Polynomial &ptxt,
                       [[maybe_unused]] const KEY &key,
                       [[maybe_unused]] Size num_polyunit,
-                      [[maybe_unused]] Ciphertext &ctxt) const {
-        throw std::runtime_error(
-            "Encryptor::innerEncrypt: Not implemented for this key type");
-    }
+                      [[maybe_unused]] Ciphertext &ctxt) const;
 
     template <typename MSG>
     void embeddingToN(const MSG &msg, const Real &delta, Polynomial &ptxt,
@@ -143,45 +148,60 @@ private:
 
     void sampleZO(const Size num_polyunit) const;
 
-    void sampleGaussian(const Size idx, const Size num_polyunit,
-                        const bool do_ntt) const;
+    void sampleGaussian(const Size num_polyunit, const bool do_ntt) const;
 
-    Context context_;
-    std::shared_ptr<alea_state> as_;
+    std::shared_ptr<RandomGenerator> rng_;
     // compute buffers
     mutable Polynomial ptxt_buffer_;
     mutable Polynomial vx_buffer_;
-    mutable std::vector<Polynomial> ex_buffers_;
+    mutable Polynomial ex_buffer_;
+    mutable std::vector<u64> samples_;
+    mutable std::vector<u64> mask_;
+    mutable std::vector<i64> i_samples_;
 
-    // TODO: move to Context
-    std::vector<utils::ModArith> modarith_;
-    utils::FFTImpl<Real> fft_;
+    utils::FFT fft_;
 };
 
+using Encryptor = EncryptorT<>;
+
 // NOLINTBEGIN
-#define DECL_ENCRYPT_TEMPLATE_MSG_KEY(msg_t, key_t, prefix)                    \
-    prefix template void Encryptor::encrypt<msg_t, key_t>(                     \
+#define DECL_ENCRYPT_TEMPLATE_MSG_KEY(preset, msg_t, key_t, prefix)            \
+    prefix template void EncryptorT<preset>::encrypt<msg_t, key_t>(            \
         const msg_t &msg, const key_t &key, Ciphertext &ctxt,                  \
         const EncryptOptions &opt) const;                                      \
-    prefix template void Encryptor::encrypt<msg_t, key_t>(                     \
+    prefix template void EncryptorT<preset>::encrypt<msg_t, key_t>(            \
         const std::vector<msg_t> &msg, const key_t &key, Ciphertext &ctxt,     \
         const EncryptOptions &opt) const;                                      \
-    prefix template void Encryptor::encrypt<msg_t, key_t>(                     \
+    prefix template void EncryptorT<preset>::encrypt<msg_t, key_t>(            \
         const msg_t *msg, const key_t &key, Ciphertext &ctxt,                  \
         const EncryptOptions &opt) const;
 
-#define DECL_ENCRYPT_TEMPLATE_MSG(msg_t, prefix)                               \
-    DECL_ENCRYPT_TEMPLATE_MSG_KEY(msg_t, SecretKey, prefix)                    \
-    DECL_ENCRYPT_TEMPLATE_MSG_KEY(msg_t, SwitchKey, prefix)                    \
-    prefix template void Encryptor::embeddingToN<msg_t>(                       \
+#define DECL_ENCRYPT_TEMPLATE_MSG(preset, msg_t, prefix)                       \
+    DECL_ENCRYPT_TEMPLATE_MSG_KEY(preset, msg_t, SecretKey, prefix)            \
+    DECL_ENCRYPT_TEMPLATE_MSG_KEY(preset, msg_t, SwitchKey, prefix)            \
+    prefix template void EncryptorT<preset>::embeddingToN<msg_t>(              \
         const msg_t &msg, const Real &delta, Polynomial &ptxt,                 \
         const Size size) const;                                                \
-    prefix template void Encryptor::encodeWithoutNTT<msg_t>(                   \
+    prefix template void EncryptorT<preset>::encodeWithoutNTT<msg_t>(          \
         const msg_t &msg, Polynomial &ptxt, const Size size, const Real scale) \
         const;
+
+#define DECL_ENCRYPT_TEMPLATE(preset, prefix)                                  \
+    prefix template class EncryptorT<preset>;                                  \
+    DECL_ENCRYPT_TEMPLATE_MSG(preset, Message, prefix)                         \
+    DECL_ENCRYPT_TEMPLATE_MSG(preset, FMessage, prefix)                        \
+    DECL_ENCRYPT_TEMPLATE_MSG(preset, CoeffMessage, prefix)                    \
+    DECL_ENCRYPT_TEMPLATE_MSG(preset, FCoeffMessage, prefix)                   \
+    prefix template void EncryptorT<preset>::innerEncrypt<SecretKey>(          \
+        const Polynomial &ptxt, const SecretKey &key, const Size num_polyunit, \
+        Ciphertext &ctxt) const;                                               \
+    prefix template void EncryptorT<preset>::innerEncrypt<SwitchKey>(          \
+        const Polynomial &ptxt, const SwitchKey &key, const Size num_polyunit, \
+        Ciphertext &ctxt) const;
 // NOLINTEND
 
-DECL_ENCRYPT_TEMPLATE_MSG(Message, extern)
-DECL_ENCRYPT_TEMPLATE_MSG(CoeffMessage, extern)
+#define X(preset) DECL_ENCRYPT_TEMPLATE(PRESET_##preset, extern)
+PRESET_LIST_WITH_EMPTY
+#undef X
 
 } // namespace deb
