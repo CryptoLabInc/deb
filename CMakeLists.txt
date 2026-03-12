@@ -216,9 +216,6 @@ if(DEB_BUILD_TEST)
   add_subdirectory(test)
 endif()
 
-# merge_archive_if_static(${PROJECT_NAME} alea)
-# merge_archive_if_static(${PROJECT_NAME} flatbuffers)
-
 if(APPLE)
   set_target_properties(${PROJECT_NAME} PROPERTIES INSTALL_RPATH "@loader_path"
                                                    BUILD_RPATH "@loader_path")
