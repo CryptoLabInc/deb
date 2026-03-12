@@ -145,7 +145,9 @@ endif()
 target_compile_definitions(${PROJECT_NAME}_obj
                            PUBLIC DEB_ALINAS_LEN=${DEB_MEMORY_ALIGN_SIZE})
 
-add_library(${PROJECT_NAME})
+add_library(${PROJECT_NAME} STATIC $<TARGET_OBJECTS:alea>
+                                   $<TARGET_OBJECTS:flatbuffers>)
+
 add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
 target_link_libraries(${PROJECT_NAME} PUBLIC ${PROJECT_NAME}_obj)
 target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
@@ -214,8 +216,8 @@ if(DEB_BUILD_TEST)
   add_subdirectory(test)
 endif()
 
-merge_archive_if_static(${PROJECT_NAME} alea)
-merge_archive_if_static(${PROJECT_NAME} flatbuffers)
+# merge_archive_if_static(${PROJECT_NAME} alea)
+# merge_archive_if_static(${PROJECT_NAME} flatbuffers)
 
 if(APPLE)
   set_target_properties(${PROJECT_NAME} PROPERTIES INSTALL_RPATH "@loader_path"

@@ -17,49 +17,50 @@
 # Merge the object files of `dependency` target with that of `target`. Both
 # should be static or object libraries; otherwise this is no-op.
 function(merge_archive_if_static target dependency)
-  # Check if the target has object files
   list(APPEND TYPES_HAVING_OBJECTS "STATIC_LIBRARY" "OBJECT_LIBRARY")
-  get_target_property(IS_STATIC ${target} TYPE)
-  if(NOT IS_STATIC IN_LIST TYPES_HAVING_OBJECTS)
+
+  get_target_property(TARGET_TYPE ${target} TYPE)
+  if(NOT TARGET_TYPE IN_LIST TYPES_HAVING_OBJECTS)
     return()
   endif()
 
-  # Check if the dependency is a target and has object files
   if(NOT TARGET ${dependency})
     return()
   endif()
-  get_target_property(IS_STATIC ${dependency} TYPE)
-  if(NOT IS_STATIC IN_LIST TYPES_HAVING_OBJECTS)
+
+  get_target_property(DEP_TYPE ${dependency} TYPE)
+  if(NOT DEP_TYPE IN_LIST TYPES_HAVING_OBJECTS)
     return()
   endif()
 
-  if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_custom_command(
-      TARGET ${target}
-      POST_BUILD
-      COMMAND rm -rf ${target}_objs && mkdir ${target}_objs
-      COMMAND rm -rf ${dependency}_objs && mkdir ${dependency}_objs
-      COMMAND ${CMAKE_COMMAND} -E chdir ${target}_objs ${CMAKE_AR} -x
-              $<TARGET_FILE:${target}>
-      COMMAND ${CMAKE_COMMAND} -E chdir ${dependency}_objs ${CMAKE_AR} -x
-              $<TARGET_FILE:${dependency}>
-      COMMAND ar -qcs $<TARGET_FILE:${target}> ${target}_objs/*.o
-              ${dependency}_objs/*.o
-      COMMAND rm -rf ${target}_objs ${dependency}_objs
-      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}) # DEPENDS ${target}
-                                                     # ${dependency})
-  elseif(CMAKE_CXX_COMPILER_ID STREQUAL "MSVC")
+  if(TARGET_TYPE STREQUAL "OBJECT_LIBRARY" OR DEP_TYPE STREQUAL
+                                              "OBJECT_LIBRARY")
+    message(
+      WARNING
+        "merge_archive_if_static does not support OBJECT_LIBRARY with archive extraction: "
+        "${target} <- ${dependency}")
+    return()
+  endif()
+
+  if(MSVC)
     add_custom_command(
       TARGET ${target}
       POST_BUILD
       COMMAND lib.exe /OUT:$<TARGET_FILE:${target}> $<TARGET_FILE:${target}>
               $<TARGET_FILE:${dependency}>
-      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}) # DEPENDS ${target}
-                                                     # ${dependency})
+      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
+  elseif(CMAKE_AR)
+    add_custom_command(
+      TARGET ${target}
+      POST_BUILD
+      COMMAND
+        ${CMAKE_COMMAND} -DTARGET_ARCHIVE=$<TARGET_FILE:${target}>
+        -DDEP_ARCHIVE=$<TARGET_FILE:${dependency}>
+        -DWORK_DIR=${CMAKE_CURRENT_BINARY_DIR}/merge_${target}_${dependency}
+        -DAR_TOOL=${CMAKE_AR} -P ${CMAKE_CURRENT_LIST_DIR}/merge_archives.cmake
+      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR})
   else()
     message(
-      WARNING
-        "Failed merging ${target} target with ${dependency}: unsupported compiler"
-    )
+      WARNING "Unsupported archiver for merging ${target} and ${dependency}")
   endif()
 endfunction()
