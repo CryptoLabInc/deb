@@ -29,7 +29,7 @@
 std::random_device rd;
 std::mt19937 gen{rd()};
 std::uniform_real_distribution<double> dist{-1.0, 1.0};
-std::uniform_int_distribution<deb::u64> dist_u64{0, UINT64_MAX};
+std::uniform_int_distribution<deb::u64> dist_u64;
 
 using namespace deb;
 
