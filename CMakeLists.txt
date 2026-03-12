@@ -59,7 +59,6 @@ message(STATUS "Generate pre-build directory: ${PRE_BUILD_DIR}")
 
 include(cmake/CPM.cmake)
 include(cmake/warnings.cmake)
-include(cmake/bundling.cmake)
 
 option(BUILD_SHARED_LIBS "Build a shared library instead of a static one." OFF)
 option(DEB_BUILD_BENCHMARK "Build the benchmark suite." OFF)
