@@ -1,5 +1,5 @@
 # ~~~
-# Copyright 2025 CryptoLab, Inc.
+# Copyright 2026 CryptoLab, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -34,22 +34,28 @@ cpmaddpackage(
 # ---------------------------------------------------------------------------
 
 set(deb_test deb_obj deb_DevHeader gtest_main)
-# Ntt Test
-add_executable(NTT-test NTT-test.cpp)
-target_link_libraries(NTT-test PRIVATE ${deb_test})
-add_gtest_target_to_ctest(NTT-test)
+
+# Operation Test
+add_executable(Operation-test Operation-test.cpp)
+target_link_libraries(Operation-test PRIVATE ${deb_test})
+add_gtest_target_to_ctest(Operation-test)
 
 # EnDecryption Test
 add_executable(EnDecryption-test EnDecryption-test.cpp)
 target_link_libraries(EnDecryption-test PRIVATE ${deb_test})
 add_gtest_target_to_ctest(EnDecryption-test)
 
+# KeyGen Test
+add_executable(KeyGen-test KeyGen-test.cpp)
+target_link_libraries(KeyGen-test PRIVATE ${deb_test})
+add_gtest_target_to_ctest(KeyGen-test)
+
 # Serialize Test
 add_executable(Serialize-test Serialize-test.cpp)
 target_link_libraries(Serialize-test PRIVATE ${deb_test})
 add_gtest_target_to_ctest(Serialize-test)
 
-# KeyGen Test
-add_executable(KeyGen-test KeyGen-test.cpp)
-target_link_libraries(KeyGen-test PRIVATE ${deb_test})
-add_gtest_target_to_ctest(KeyGen-test)
+# Ntt Test
+add_executable(NTT-test NTT-test.cpp)
+target_link_libraries(NTT-test PRIVATE ${deb_test})
+add_gtest_target_to_ctest(NTT-test)

@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -67,22 +67,22 @@ u64 findPrimitiveRoot(u64 prime) {
 }
 
 } // namespace utils
+
 namespace {
 
-inline void butterfly(u64 &x, u64 &y, const u64 w, const u64 ws, const u64 p1,
-                      const u64 p2) {
-    u64 tx = subIfGE(x, p2);
-    u64 ty = mulModLazy(y, w, ws, p1);
-    x = tx + ty;
-    y = tx + p2 - ty;
+static inline void butterfly(u64 &x, u64 &y, const u64 &w, const u64 &ws,
+                             const u64 &p1, const u64 &p2) {
+    const u64 ty = mulModLazy(y, w, ws, p1);
+    x = subIfGE(x, p2);
+    y = x + p2 - ty;
+    x += ty;
 }
 
-inline void butterflyInv(u64 &x, u64 &y, const u64 w, const u64 ws,
-                         const u64 p1, const u64 p2) {
-    u64 tx = x + y;
-    u64 ty = x + p2 - y;
-    x = subIfGE(tx, p2);
-    y = mulModLazy(ty, w, ws, p1);
+static inline void butterflyInv(u64 &x, u64 &y, const u64 &w, const u64 &ws,
+                                const u64 &p1, const u64 &p2) {
+    const u64 tx = subIfGE(x + y, p2);
+    y = mulModLazy(x + p2 - y, w, ws, p1);
+    x = tx;
 }
 
 } // anonymous namespace
@@ -92,7 +92,7 @@ NTT::NTT(u64 degree, u64 prime)
       psi_rev_(degree_), psi_inv_rev_(degree_), psi_rev_shoup_(degree_),
       psi_inv_rev_shoup_(degree_) {
 
-    const u64 num_roots = degree;
+    const u64 num_roots = degree_;
 
     if (prime % (2 * num_roots) != 1)
         throw std::runtime_error("Not an NTT-friendly prime given.");
@@ -339,6 +339,7 @@ void NTT::computeBackwardNativeSingleStep(u64 *op, const u64 t) const {
         }
         break;
     case 8:
+        DEB_LOOP_UNROLL_8
         for (u64 i = 0; i < (degree >> 4); ++i) {
             butterflyInv(op[16 * i + 0], op[16 * i + 8], w_ptr[i], ws_ptr[i],
                          prime, two_prime);

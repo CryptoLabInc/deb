@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -29,57 +29,78 @@ namespace deb {
 template <typename T> using Vector = flatbuffers::Vector<T>;
 
 /**
- * @brief Converts a buffer of @ref Complex into a vector usable by FlatBuffers.
- * @param data Pointer to complex values.
- * @param size Number of elements to convert.
+ * @brief Converts a double-precision complex into FlatBuffers format.
+ * @param data Pointer to double-precision complex values.
+ * @param size Number of elements in @p data.
  * @return Vector of FlatBuffer-compatible complex values.
  */
 std::vector<deb_fb::Complex> toComplexVector(const Complex *data,
                                              const Size size);
 /**
- * @brief Converts FlatBuffers complex data back into @ref Complex values.
- * @param data FlatBuffers vector pointer.
+ * @brief Converts FlatBuffers double-precision complex data back into @ref
+ * Complex values.
+ * @param data FlatBuffers double-precision complex vector pointer.
  * @return Vector with decoded complex values.
  */
 std::vector<Complex>
 toDebComplexVector(const Vector<const deb_fb::Complex *> *data);
 
 /**
- * @brief Converts single-precision complex data into FlatBuffers format.
- * @param data Pointer to complex32 values.
- * @param size Number of elements.
- * @return Vector of FlatBuffer-compatible complex32 values.
+ * @brief Converts single-precision complex into FlatBuffers format.
+ * @param data Pointer to single-precision complex values.
+ * @param size Number of elements in @p data.
+ * @return Vector of FlatBuffer-compatible complex values.
  */
 std::vector<deb_fb::Complex32> toComplex32Vector(const ComplexT<float> *data,
                                                  const Size size);
 /**
- * @brief Converts FlatBuffers complex32 data back into @ref Complex values.
- * @param data FlatBuffers vector pointer.
+ * @brief Converts FlatBuffers single-precision complex data back into @ref
+ * ComplexT<float> values.
+ * @param data FlatBuffers single-precision complex vector pointer.
  * @return Vector with decoded complex values.
  */
-std::vector<Complex>
+std::vector<ComplexT<float>>
 toDebComplex32Vector(const Vector<const deb_fb::Complex32 *> *data);
 
 /**
- * @brief Serializes a high-precision slot message into FlatBuffers format.
- * @param builder FlatBuffer builder used to allocate the payload.
- * @param message Plaintext message container.
+ * @brief Serializes a double-precision slot message into FlatBuffers format.
+ * @param builder FlatBuffer builder.
+ * @param message Double-precision deb message object.
  * @return Offset into the builder pointing to the serialized object.
  */
 flatbuffers::Offset<deb_fb::Message>
 serializeMessage(flatbuffers::FlatBufferBuilder &builder,
                  const Message &message);
 /**
- * @brief Deserializes a FlatBuffers message into @ref Message.
- * @param message FlatBuffers object.
- * @return Plaintext message container.
+ * @brief Deserializes a FlatBuffers double-precision message into @ref Message.
+ * @param message FlatBuffers double-precision message object.
+ * @return Deserialized deb format message.
  */
 Message deserializeMessage(const deb_fb::Message *message);
 
 /**
- * @brief Serializes coefficient-domain plaintexts.
+ * @brief Serializes a single-precision slot message into FlatBuffers format.
  * @param builder FlatBuffer builder.
- * @param coeff Coefficient-domain message container.
+ * @param message Single-precision message object.
+ * @return Offset into the builder pointing to the serialized object.
+ */
+flatbuffers::Offset<deb_fb::Message32>
+serializeFMessage(flatbuffers::FlatBufferBuilder &builder,
+                  const FMessage &message);
+
+/**
+ * @brief Deserializes a FlatBuffers single-precision message into @ref
+ * FMessage.
+ * @param message FlatBuffers single-precision message object.
+ * @return Deserialized deb format message.
+ */
+FMessage deserializeFMessage(const deb_fb::Message32 *message);
+
+/**
+ * @brief Serializes a double-precision coefficient message into FlatBuffers
+ * format.
+ * @param builder FlatBuffer builder.
+ * @param coeff Double-precision coefficient message object.
  * @return Offset pointing to serialized coefficients.
  */
 flatbuffers::Offset<deb_fb::Coeff>
@@ -87,11 +108,31 @@ serializeCoeff(flatbuffers::FlatBufferBuilder &builder,
                const CoeffMessage &coeff);
 
 /**
- * @brief Deserializes coefficient-domain plaintexts.
- * @param coeff FlatBuffers coefficient object.
- * @return Coefficient-domain message container.
+ * @brief Deserializes a FlatBuffers double-precision coefficient message into
+ * @ref CoeffMessage.
+ * @param coeff FlatBuffers double-precision coefficient object.
+ * @return Deserialized deb format coefficient message.
  */
 CoeffMessage deserializeCoeff(const deb_fb::Coeff *coeff);
+
+/**
+ * @brief Serializes a single-precision coefficient message into FlatBuffers
+ * format.
+ * @param builder FlatBuffer builder.
+ * @param coeff Single-precision coefficient message object.
+ * @return Offset pointing to serialized coefficients.
+ */
+flatbuffers::Offset<deb_fb::Coeff32>
+serializeFCoeff(flatbuffers::FlatBufferBuilder &builder,
+                const FCoeffMessage &coeff);
+
+/**
+ * @brief Deserializes a FlatBuffers single-precision coefficient message into
+ * @ref FCoeffMessage.
+ * @param coeff FlatBuffers single-precision coefficient object.
+ * @return Deserialized deb format coefficient message.
+ */
+FCoeffMessage deserializeFCoeff(const deb_fb::Coeff32 *coeff);
 
 /**
  * @brief Serializes a poly unit into FlatBuffers form.
@@ -200,8 +241,12 @@ void appendOffsetToVector(const flatbuffers::Offset<T> &offset,
         type_vec.push_back(deb_fb::DebUnion_PolyUnit);
     } else if constexpr (std::is_same_v<T, deb_fb::Message>) {
         type_vec.push_back(deb_fb::DebUnion_Message);
+    } else if constexpr (std::is_same_v<T, deb_fb::Message32>) {
+        type_vec.push_back(deb_fb::DebUnion_Message32);
     } else if constexpr (std::is_same_v<T, deb_fb::Coeff>) {
         type_vec.push_back(deb_fb::DebUnion_Coeff);
+    } else if constexpr (std::is_same_v<T, deb_fb::Coeff32>) {
+        type_vec.push_back(deb_fb::DebUnion_Coeff32);
     } else {
         throw std::runtime_error(
             "[appendOffsetToVector] Unsupported type for serialization");
@@ -250,8 +295,12 @@ template <typename T> void serializeToStream(const T &data, std::ostream &os) {
         builder.Finish(toDeb(builder, serializePolyUnit(builder, data)));
     } else if constexpr (std::is_same_v<T, Message>) {
         builder.Finish(toDeb(builder, serializeMessage(builder, data)));
+    } else if constexpr (std::is_same_v<T, FMessage>) {
+        builder.Finish(toDeb(builder, serializeFMessage(builder, data)));
     } else if constexpr (std::is_same_v<T, CoeffMessage>) {
         builder.Finish(toDeb(builder, serializeCoeff(builder, data)));
+    } else if constexpr (std::is_same_v<T, FCoeffMessage>) {
+        builder.Finish(toDeb(builder, serializeFCoeff(builder, data)));
     } else {
         throw std::runtime_error(
             "[serializeToStream] Unsupported type for serialization");
@@ -290,7 +339,7 @@ void deserializeFromStream(std::istream &is, T &data,
     if constexpr (std::is_same_v<T, SwitchKey>) {
         data = deserializeSwk(deb->list()->GetAs<deb_fb::Swk>(0));
     } else if constexpr (std::is_same_v<T, SecretKey>) {
-        data = deserializeSk(deb->list()->GetAs<deb_fb::Sk>(0));
+        data = std::move(deserializeSk(deb->list()->GetAs<deb_fb::Sk>(0)));
     } else if constexpr (std::is_same_v<T, Ciphertext>) {
         data = deserializeCipher(deb->list()->GetAs<deb_fb::Cipher>(0));
     } else if constexpr (std::is_same_v<T, Polynomial>) {
@@ -304,8 +353,12 @@ void deserializeFromStream(std::istream &is, T &data,
         data = deserializePolyUnit(deb->list()->GetAs<deb_fb::PolyUnit>(0));
     } else if constexpr (std::is_same_v<T, Message>) {
         data = deserializeMessage(deb->list()->GetAs<deb_fb::Message>(0));
+    } else if constexpr (std::is_same_v<T, FMessage>) {
+        data = deserializeFMessage(deb->list()->GetAs<deb_fb::Message32>(0));
     } else if constexpr (std::is_same_v<T, CoeffMessage>) {
         data = deserializeCoeff(deb->list()->GetAs<deb_fb::Coeff>(0));
+    } else if constexpr (std::is_same_v<T, FCoeffMessage>) {
+        data = deserializeFCoeff(deb->list()->GetAs<deb_fb::Coeff32>(0));
     } else {
         throw std::runtime_error(
             "[deserializeFromStream] Unsupported type for deserialization");

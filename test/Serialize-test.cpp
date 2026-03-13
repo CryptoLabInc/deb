@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -24,39 +24,18 @@ using namespace deb;
 
 class Serialize : public DebTestBase {
 public:
-    template <typename T>
-    void compareArray(const T *arr1, const T *arr2, const Size size) {
-        for (Size i = 0; i < size; ++i) {
-            ASSERT_EQ(arr1[i], arr2[i]);
-        }
-    }
-
-    void comparePoly(const PolyUnit &poly1, const PolyUnit &poly2) {
-        ASSERT_EQ(poly1.prime(), poly2.prime());
-        ASSERT_EQ(poly1.degree(), poly2.degree());
-        ASSERT_EQ(poly1.isNTT(), poly2.isNTT());
-        compareArray(poly1.data(), poly2.data(), poly1.degree());
-    }
-
-    void compareBigPoly(const Polynomial &bigpoly1,
-                        const Polynomial &bigpoly2) {
-        ASSERT_EQ(bigpoly1.size(), bigpoly2.size());
-        for (Size i = 0; i < bigpoly1.size(); ++i) {
-            comparePoly(bigpoly1[i], bigpoly2[i]);
-        }
-    }
-
     void compareCipher(const Ciphertext &cipher1, const Ciphertext &cipher2) {
+        ASSERT_EQ(cipher1.preset(), cipher2.preset());
         ASSERT_EQ(cipher1.numPoly(), cipher2.numPoly());
         ASSERT_EQ(cipher1.encoding(), cipher2.encoding());
         for (Size i = 0; i < cipher1.numPoly(); ++i) {
-            compareBigPoly(cipher1[i], cipher2[i]);
+            comparePoly(cipher1[i], cipher2[i]);
         }
     }
 };
 
 TEST_P(Serialize, MessageSerializationTest) {
-    Message msg = gen_random_message()[0];
+    Message msg = gen_random_message<MSGS>()[0];
     std::ostringstream os;
     serializeToStream(msg, os);
     std::istringstream is(os.str());
@@ -70,8 +49,20 @@ TEST_P(Serialize, MessageSerializationTest) {
     }
 }
 
+TEST_P(Serialize, FMessageSerializationTest) {
+    FMessage msg = gen_random_message<FMSGS>()[0];
+    std::ostringstream os;
+    serializeToStream(msg, os);
+    std::istringstream is(os.str());
+    FMessage deserialized_msg(0);
+    deserializeFromStream(is, deserialized_msg);
+
+    EXPECT_EQ(msg.size(), deserialized_msg.size());
+    compareArray(msg.data(), deserialized_msg.data(), msg.size());
+}
+
 TEST_P(Serialize, CoeffSerializationTest) {
-    CoeffMessage coeff = gen_random_coeff()[0];
+    CoeffMessage coeff = gen_random_coeff<COEFFS>()[0];
     std::ostringstream os;
     serializeToStream(coeff, os);
     std::istringstream is(os.str());
@@ -82,8 +73,20 @@ TEST_P(Serialize, CoeffSerializationTest) {
     compareArray(coeff.data(), deserialized_coeff.data(), coeff.size());
 }
 
-TEST_P(Serialize, PolySerializationTest) {
-    const auto prime = context->get_primes()[0];
+TEST_P(Serialize, FCoeffSerializationTest) {
+    FCoeffMessage coeff = gen_random_coeff<FCOEFFS>()[0];
+    std::ostringstream os;
+    serializeToStream(coeff, os);
+    std::istringstream is(os.str());
+    FCoeffMessage deserialized_coeff(0);
+    deserializeFromStream(is, deserialized_coeff);
+
+    EXPECT_EQ(coeff.size(), deserialized_coeff.size());
+    compareArray(coeff.data(), deserialized_coeff.data(), coeff.size());
+}
+
+TEST_P(Serialize, PolyUnitSerializationTest) {
+    const auto prime = get_primes(preset)[0];
     PolyUnit poly(prime, degree);
     for (Size i = 0; i < degree; ++i) {
         poly[i] = static_cast<u64>(dist(gen) * static_cast<double>(prime));
@@ -95,12 +98,12 @@ TEST_P(Serialize, PolySerializationTest) {
     PolyUnit deserialized_poly(prime, 0);
     deserializeFromStream(is, deserialized_poly);
 
-    comparePoly(poly, deserialized_poly);
+    comparePolyUnit(poly, deserialized_poly);
 }
 
-TEST_P(Serialize, BigPolySerializationTest) {
-    Polynomial bigpoly(context);
-    const auto *const primes = context->get_primes();
+TEST_P(Serialize, PolySerializationTest) {
+    Polynomial bigpoly(preset);
+    const auto *const primes = get_primes(preset);
     for (Size i = 0; i < bigpoly.size(); ++i) {
         for (Size j = 0; j < degree; ++j) {
             bigpoly[i][j] =
@@ -111,15 +114,15 @@ TEST_P(Serialize, BigPolySerializationTest) {
     std::ostringstream os;
     serializeToStream(bigpoly, os);
     std::istringstream is(os.str());
-    Polynomial deserialized_bigpoly(context, static_cast<Size>(0));
+    Polynomial deserialized_bigpoly(preset, static_cast<Size>(0));
     deserializeFromStream(is, deserialized_bigpoly, preset);
 
-    compareBigPoly(bigpoly, deserialized_bigpoly);
+    comparePoly(bigpoly, deserialized_bigpoly);
 }
 
 TEST_P(Serialize, CipherSerializationTest) {
-    Ciphertext ctxt(context, context->get_encryption_level(),
-                    context->get_num_secret());
+    Ciphertext ctxt(preset, get_encryption_level(preset),
+                    get_num_secret(preset));
     for (Size i = 0; i < ctxt.numPoly(); ++i) {
         for (Size j = 0; j < ctxt[i].size(); ++j) {
             for (Size k = 0; k < degree; ++k) {
@@ -133,7 +136,7 @@ TEST_P(Serialize, CipherSerializationTest) {
     std::ostringstream os;
     serializeToStream(ctxt, os);
     std::istringstream is(os.str());
-    Ciphertext deserialized_ctxt(context, 0, 1);
+    Ciphertext deserialized_ctxt(preset, 0, 1);
     deserializeFromStream(is, deserialized_ctxt);
 
     compareCipher(ctxt, deserialized_ctxt);
@@ -151,13 +154,13 @@ TEST_P(Serialize, SecretKeySerializationTest) {
     EXPECT_EQ(sk.numPoly(), deserialized_sk.numPoly());
     compareArray(sk.coeffs(), deserialized_sk.coeffs(), sk.coeffsSize());
     for (Size i = 0; i < sk.numPoly(); ++i) {
-        compareBigPoly(sk[i], deserialized_sk[i]);
+        comparePoly(sk[i], deserialized_sk[i]);
     }
 }
 
 TEST_P(Serialize, SwkSerializationTest) {
     const SwitchKeyKind kind = SWK_ROT;
-    SwitchKey swk(context, kind, dist_u64(gen) % ((degree >> 1) - 1) + 1);
+    SwitchKey swk(preset, kind, dist_u64(gen) % ((degree >> 1) - 1) + 1);
 
     for (Size i = 0; i < swk.axSize(); ++i) {
         for (Size j = 0; j < swk.ax(i).size(); ++j) {
@@ -171,7 +174,7 @@ TEST_P(Serialize, SwkSerializationTest) {
     std::ostringstream os;
     serializeToStream(swk, os);
     std::istringstream is(os.str());
-    SwitchKey deserialized_swk(context, kind);
+    SwitchKey deserialized_swk(preset, kind);
     deserializeFromStream(is, deserialized_swk);
 
     EXPECT_EQ(swk.preset(), deserialized_swk.preset());
@@ -181,21 +184,21 @@ TEST_P(Serialize, SwkSerializationTest) {
     EXPECT_EQ(swk.axSize(), deserialized_swk.axSize());
     EXPECT_EQ(swk.bxSize(), deserialized_swk.bxSize());
     for (Size i = 0; i < swk.axSize(); ++i) {
-        compareBigPoly(swk.ax(i), deserialized_swk.ax(i));
+        comparePoly(swk.ax(i), deserialized_swk.ax(i));
     }
     for (Size i = 0; i < swk.bxSize(); ++i) {
-        compareBigPoly(swk.bx(i), deserialized_swk.bx(i));
+        comparePoly(swk.bx(i), deserialized_swk.bx(i));
     }
 }
 
 TEST_P(Serialize, EndecryptionSerializationTest) {
 
-    MSGS msg = gen_random_message();
+    MSGS msg = gen_random_message<MSGS>();
     msg = scale_message(msg, 0);
-    MSGS decrypted_msg = gen_empty_message();
+    MSGS decrypted_msg = gen_empty_message<MSGS>();
 
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    Ciphertext ctxt(context);
+    Ciphertext ctxt(preset);
     encryptor.encrypt(msg, sk, ctxt);
 
     std::ostringstream os;
@@ -203,12 +206,22 @@ TEST_P(Serialize, EndecryptionSerializationTest) {
     serializeToStream(sk, os);
 
     std::istringstream is(os.str());
-    Ciphertext deserialized_ctxt(context);
+    Ciphertext deserialized_ctxt(preset);
     deserializeFromStream(is, deserialized_ctxt);
     SecretKey deserialized_sk(preset);
     deserializeFromStream(is, deserialized_sk);
 
+    decryptor.decrypt(ctxt, sk, msg);
     decryptor.decrypt(deserialized_ctxt, deserialized_sk, decrypted_msg);
+    compareCipher(ctxt, deserialized_ctxt);
+    EXPECT_EQ(sk.preset(), deserialized_sk.preset());
+    EXPECT_EQ(sk.numPoly(), deserialized_sk.numPoly());
+    compareArray(sk.getSeed().data(), deserialized_sk.getSeed().data(),
+                 sk.getSeed().size());
+    compareArray(sk.coeffs(), deserialized_sk.coeffs(), sk.coeffsSize());
+    for (Size i = 0; i < sk.numPoly(); ++i) {
+        comparePoly(sk[i], deserialized_sk[i]);
+    }
     compare_msg(msg, decrypted_msg, scale_error(sk_err, 0));
 }
 
@@ -219,14 +232,14 @@ TEST_P(Serialize, EndecryptionWithEncKeySerializationTest) {
     std::ostringstream os;
     serializeToStream(swk, os);
     std::istringstream is(os.str());
-    SwitchKey deserialized_swk(context, SWK_ENC);
+    SwitchKey deserialized_swk(preset, SWK_ENC);
     deserializeFromStream(is, deserialized_swk);
 
-    MSGS msg = gen_random_message();
+    MSGS msg = gen_random_message<MSGS>();
     msg = scale_message(msg, 0);
-    MSGS decrypted_msg = gen_empty_message();
+    MSGS decrypted_msg = gen_empty_message<MSGS>();
 
-    Ciphertext ctxt(context);
+    Ciphertext ctxt(preset);
     encryptor.encrypt(msg, deserialized_swk, ctxt);
     decryptor.decrypt(ctxt, sk, decrypted_msg);
     compare_msg(msg, decrypted_msg, scale_error(enc_err, 0));
@@ -258,7 +271,7 @@ TEST_P(Serialize, MinimalSecretKeySerializationTest) {
     completeSecretKey(sk);
     completeSecretKey(deserialized_sk);
     for (Size i = 0; i < sk.numPoly(); ++i) {
-        compareBigPoly(sk[i], deserialized_sk[i]);
+        comparePoly(sk[i], deserialized_sk[i]);
     }
 }
 

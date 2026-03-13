@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -63,11 +63,10 @@ public:
     void computeBackward(u64 *op) const;
 
 private:
-    u64 prime_;
-    u64 two_prime_;
-    u64 degree_;
+    const u64 prime_;
+    const u64 two_prime_;
+    const u64 degree_;
 
-    // TODO(juny): make support constexpr for NTT
     // roots of unity (bit reversed)
     std::vector<u64> psi_rev_;
     std::vector<u64> psi_inv_rev_;
@@ -84,4 +83,5 @@ private:
     void computeBackwardNativeSingleStep(u64 *op, const u64 t) const;
     void computeBackwardNativeLast(u64 *op) const;
 };
+
 } // namespace deb::utils

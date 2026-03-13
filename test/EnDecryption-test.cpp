@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,39 +16,40 @@
 
 #include "DebParam.hpp"
 #include "TestBase.hpp"
+#include "utils/OmpUtils.hpp"
 
 using namespace deb;
 
 class EnDecrypt : public DebTestBase {};
 
 TEST_P(EnDecrypt, EncryptWithEmptySecretKey) {
-    MSGS msg = gen_random_message();
+    MSGS msg = gen_random_message<MSGS>();
 
     SecretKey sk(preset, SeedGenerator::Gen());
-    Ciphertext ctxt(context);
-    DEB_EXPECT(encryptor.encrypt(msg, sk, ctxt));
+    Ciphertext ctxt(preset);
+    DEB_TEST_EXPECT(encryptor.encrypt(msg, sk, ctxt));
 }
 TEST_P(EnDecrypt, DecryptWithEmptySecretKey) {
-    setOmpThreadLimit(1);
-    MSGS msg = gen_random_message();
+    utils::setOmpThreadLimit(1);
+    MSGS msg = gen_random_message<MSGS>();
     SecretKey sk =
         SecretKeyGenerator::GenSecretKey(preset, SeedGenerator::Gen());
-    Ciphertext ctxt(context);
+    Ciphertext ctxt(preset);
     encryptor.encrypt(msg, sk, ctxt);
     sk.allocPolys(0);
 
-    DEB_EXPECT(decryptor.decrypt(ctxt, sk, msg));
-    unsetOmpThreadLimit();
+    DEB_TEST_EXPECT(decryptor.decrypt(ctxt, sk, msg));
+    utils::unsetOmpThreadLimit();
 }
 
 TEST_P(EnDecrypt, EncryptAndDecryptWithSecretKey) {
-    MSGS msg = gen_random_message();
+    MSGS msg = gen_random_message<MSGS>();
 
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    MSGS decrypted_msg = gen_empty_message();
+    MSGS decrypted_msg = gen_empty_message<MSGS>();
 
-    for (Size l = 0; l < context->get_num_p(); ++l) {
-        Ciphertext ctxt(context, l);
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
         MSGS scaled_msg = scale_message(msg, l);
         encryptor.encrypt(scaled_msg, sk, ctxt, EncryptOptions().Level(l));
         decryptor.decrypt(ctxt, sk, decrypted_msg);
@@ -57,16 +58,31 @@ TEST_P(EnDecrypt, EncryptAndDecryptWithSecretKey) {
     }
 }
 
+TEST_P(EnDecrypt, EncryptAndDecryptFloatWithSecretKey) {
+    FMSGS msg = gen_random_message<FMSGS>();
+
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    FMSGS decrypted_msg = gen_empty_message<FMSGS>();
+
+    for (Size l = 0; l < std::min(2U, get_num_p(preset)); ++l) {
+        Ciphertext ctxt(preset, l);
+        encryptor.encrypt(msg, sk, ctxt, EncryptOptions().Level(l));
+        decryptor.decrypt(ctxt, sk, decrypted_msg);
+
+        compare_msg(msg, decrypted_msg, scale_error(sk_err_f, l));
+    }
+}
+
 TEST_P(EnDecrypt, EncryptAndDecryptWithEncKey) {
-    MSGS msg = gen_random_message();
+    MSGS msg = gen_random_message<MSGS>();
 
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
     KeyGenerator keygen(preset);
     SwitchKey enckey = keygen.genEncKey(sk);
-    MSGS decrypted_msg = gen_empty_message();
+    MSGS decrypted_msg = gen_empty_message<MSGS>();
 
-    for (Size l = 0; l < context->get_num_p(); ++l) {
-        Ciphertext ctxt(context, l);
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
         MSGS scaled_msg = scale_message(msg, l);
         encryptor.encrypt(scaled_msg, enckey, ctxt, EncryptOptions().Level(l));
         decryptor.decrypt(ctxt, sk, decrypted_msg);
@@ -75,21 +91,38 @@ TEST_P(EnDecrypt, EncryptAndDecryptWithEncKey) {
     }
 }
 
+TEST_P(EnDecrypt, EncryptAndDecryptFloatWithEncKey) {
+    FMSGS msg = gen_random_message<FMSGS>();
+
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    KeyGenerator keygen(preset);
+    SwitchKey enckey = keygen.genEncKey(sk);
+    FMSGS decrypted_msg = gen_empty_message<FMSGS>();
+
+    for (Size l = 0; l < std::min(2U, get_num_p(preset)); ++l) {
+        Ciphertext ctxt(preset, l);
+        encryptor.encrypt(msg, enckey, ctxt, EncryptOptions().Level(l));
+        decryptor.decrypt(ctxt, sk, decrypted_msg);
+
+        compare_msg(msg, decrypted_msg, scale_error(enc_err_f, l));
+    }
+}
+
 TEST_P(EnDecrypt, ScaleEncryptAndDecryptWithSecretKey) {
 
-    MSGS msg = gen_random_message();
+    MSGS msg = gen_random_message<MSGS>();
     const int max_scale_bit =
-        static_cast<int>(utils::bitWidth(context->get_primes()[0]) - 2);
+        static_cast<int>(utils::bitWidth(get_primes(preset)[0]) - 2);
     const double min_scale_bit = static_cast<int>(30 + log_error);
     const double scale_bit =
         min_scale_bit + abs(dist(gen)) * (max_scale_bit - min_scale_bit);
     const double scale = std::pow(2.0, scale_bit);
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
 
-    MSGS decrypted_msg = gen_empty_message();
+    MSGS decrypted_msg = gen_empty_message<MSGS>();
 
-    for (Size l = 0; l < context->get_num_p(); ++l) {
-        Ciphertext ctxt(context, l);
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
         encryptor.encrypt(msg, sk, ctxt,
                           EncryptOptions().Level(l).Scale(scale));
         decryptor.decrypt(ctxt, sk, decrypted_msg, scale);
@@ -99,10 +132,10 @@ TEST_P(EnDecrypt, ScaleEncryptAndDecryptWithSecretKey) {
 
 TEST_P(EnDecrypt, ScaleEncryptAndDecryptWithEncKey) {
 
-    MSGS msg = gen_random_message();
+    MSGS msg = gen_random_message<MSGS>();
 
     const int max_scale_bit =
-        static_cast<int>(utils::bitWidth(context->get_primes()[0]) - 2);
+        static_cast<int>(utils::bitWidth(get_primes(preset)[0]) - 2);
     const double min_scale_bit = static_cast<int>(30 + log_error);
     const double scale_bit =
         min_scale_bit + abs(dist(gen)) * (max_scale_bit - min_scale_bit);
@@ -110,10 +143,10 @@ TEST_P(EnDecrypt, ScaleEncryptAndDecryptWithEncKey) {
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
     SwitchKey enckey = KeyGenerator(preset).genEncKey(sk);
 
-    MSGS decrypted_msg = gen_empty_message();
+    MSGS decrypted_msg = gen_empty_message<MSGS>();
 
-    for (Size l = 0; l < context->get_num_p(); ++l) {
-        Ciphertext ctxt(context, l);
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
         encryptor.encrypt(msg, enckey, ctxt,
                           EncryptOptions().Level(l).Scale(scale));
         decryptor.decrypt(ctxt, sk, decrypted_msg, scale);
@@ -123,13 +156,13 @@ TEST_P(EnDecrypt, ScaleEncryptAndDecryptWithEncKey) {
 
 TEST_P(EnDecrypt, EncryptAndDecryptCoeffWithSecretKey) {
 
-    COEFFS coeff = gen_random_coeff();
+    COEFFS coeff = gen_random_coeff<COEFFS>();
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
 
-    COEFFS decrypted_coeff = gen_empty_coeff();
+    COEFFS decrypted_coeff = gen_empty_coeff<COEFFS>();
 
-    for (Size l = 0; l < context->get_num_p(); ++l) {
-        Ciphertext ctxt(context, l);
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
         COEFFS scaled_coeff = scale_coeff(coeff, l);
         encryptor.encrypt(scaled_coeff, sk, ctxt, EncryptOptions().Level(l));
         decryptor.decrypt(ctxt, sk, decrypted_coeff);
@@ -137,17 +170,32 @@ TEST_P(EnDecrypt, EncryptAndDecryptCoeffWithSecretKey) {
     }
 }
 
+TEST_P(EnDecrypt, EncryptAndDecryptFloatCoeffWithSecretKey) {
+
+    FCOEFFS coeff = gen_random_coeff<FCOEFFS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+
+    FCOEFFS decrypted_coeff = gen_empty_coeff<FCOEFFS>();
+
+    for (Size l = 0; l < std::min(2U, get_num_p(preset)); ++l) {
+        Ciphertext ctxt(preset, l);
+        encryptor.encrypt(coeff, sk, ctxt, EncryptOptions().Level(l));
+        decryptor.decrypt(ctxt, sk, decrypted_coeff);
+        compare_coeff(coeff, decrypted_coeff, scale_error(sk_err_f, l));
+    }
+}
+
 TEST_P(EnDecrypt, EncryptAndDecryptCoeffWithEncKey) {
 
-    COEFFS coeff = gen_random_coeff();
+    COEFFS coeff = gen_random_coeff<COEFFS>();
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
     KeyGenerator keygen(preset);
     SwitchKey enckey = keygen.genEncKey(sk);
 
-    COEFFS decrypted_coeff = gen_empty_coeff();
+    COEFFS decrypted_coeff = gen_empty_coeff<COEFFS>();
 
-    for (Size l = 0; l < context->get_num_p(); ++l) {
-        Ciphertext ctxt(context, l);
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
         COEFFS scaled_coeff = scale_coeff(coeff, l);
         encryptor.encrypt(scaled_coeff, enckey, ctxt,
                           EncryptOptions().Level(l));
@@ -156,22 +204,39 @@ TEST_P(EnDecrypt, EncryptAndDecryptCoeffWithEncKey) {
     }
 }
 
+TEST_P(EnDecrypt, EncryptAndDecryptFloatCoeffWithEncKey) {
+
+    FCOEFFS coeff = gen_random_coeff<FCOEFFS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    KeyGenerator keygen(preset);
+    SwitchKey enckey = keygen.genEncKey(sk);
+
+    FCOEFFS decrypted_coeff = gen_empty_coeff<FCOEFFS>();
+
+    for (Size l = 0; l < std::min(2U, get_num_p(preset)); ++l) {
+        Ciphertext ctxt(preset, l);
+        encryptor.encrypt(coeff, enckey, ctxt, EncryptOptions().Level(l));
+        decryptor.decrypt(ctxt, sk, decrypted_coeff);
+        compare_coeff(coeff, decrypted_coeff, scale_error(enc_err_f, l));
+    }
+}
+
 TEST_P(EnDecrypt, ScaleEncryptAndDecryptCoeffWithSecretKey) {
 
-    COEFFS coeff = gen_random_coeff();
+    COEFFS coeff = gen_random_coeff<COEFFS>();
 
     const int max_scale_bit =
-        static_cast<int>(utils::bitWidth(context->get_primes()[0]) - 2);
+        static_cast<int>(utils::bitWidth(get_primes(preset)[0]) - 2);
     const double min_scale_bit = static_cast<int>(30 + log_error);
     const double scale_bit =
         min_scale_bit + abs(dist(gen)) * (max_scale_bit - min_scale_bit);
     const double scale = std::pow(2.0, scale_bit);
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
 
-    COEFFS decrypted_coeff = gen_empty_coeff();
+    COEFFS decrypted_coeff = gen_empty_coeff<COEFFS>();
 
-    for (Size l = 0; l < context->get_num_p(); ++l) {
-        Ciphertext ctxt(context, l);
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
         encryptor.encrypt(coeff, sk, ctxt,
                           EncryptOptions().Level(l).Scale(scale));
         decryptor.decrypt(ctxt, sk, decrypted_coeff, scale);
@@ -181,10 +246,10 @@ TEST_P(EnDecrypt, ScaleEncryptAndDecryptCoeffWithSecretKey) {
 
 TEST_P(EnDecrypt, ScaleEncryptAndDecryptCoeffWithEncKey) {
 
-    COEFFS coeff = gen_random_coeff();
+    COEFFS coeff = gen_random_coeff<COEFFS>();
 
     const int max_scale_bit =
-        static_cast<int>(utils::bitWidth(context->get_primes()[0]) - 2);
+        static_cast<int>(utils::bitWidth(get_primes(preset)[0]) - 2);
     const double min_scale_bit = static_cast<int>(30 + log_error);
     const double scale_bit =
         min_scale_bit + abs(dist(gen)) * (max_scale_bit - min_scale_bit);
@@ -192,10 +257,10 @@ TEST_P(EnDecrypt, ScaleEncryptAndDecryptCoeffWithEncKey) {
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
     SwitchKey enckey = KeyGenerator(preset).genEncKey(sk);
 
-    COEFFS decrypted_coeff = gen_empty_coeff();
+    COEFFS decrypted_coeff = gen_empty_coeff<COEFFS>();
 
-    for (Size l = 0; l < context->get_num_p(); ++l) {
-        Ciphertext ctxt(context, l);
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
         encryptor.encrypt(coeff, enckey, ctxt,
                           EncryptOptions().Level(l).Scale(scale));
         decryptor.decrypt(ctxt, sk, decrypted_coeff, scale);

@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -17,9 +17,8 @@
 #pragma once
 
 #include "CKKSTypes.hpp"
-#include "Context.hpp"
 #include "utils/FFT.hpp"
-#include "utils/ModArith.hpp"
+#include "utils/PresetTraits.hpp"
 
 #include <type_traits>
 
@@ -29,14 +28,19 @@ namespace deb {
 /**
  * @brief Provides CKKS decryption and decoding utilities.
  */
-class Decryptor {
+template <Preset P = PRESET_EMPTY> class DecryptorT : public PresetTraits<P> {
+#define CV(type, var_name) using PresetTraits<P>::var_name;
+    CONST_LIST
+#undef CV
+    using PresetTraits<P>::modarith;
+
 public:
     /**
      * @brief Creates a decryptor for the given preset.
      * @param preset Target preset that defines polynomial sizes and moduli.
      */
-    explicit Decryptor(const Preset preset);
-    // explicit Encryptor(const deb_shared_context_t &context);
+    explicit DecryptorT();
+    explicit DecryptorT(const Preset preset);
 
     template <typename MSG,
               std::enable_if_t<!std::is_pointer_v<std::decay_t<MSG>>, int> = 0>
@@ -76,41 +80,74 @@ public:
      */
     void decrypt(const Ciphertext &ctxt, const SecretKey &sk,
                  std::vector<MSG> &msg, Real scale = 0) const {
-        deb_assert(msg.size() == context_->get_num_secret(),
+        deb_assert(msg.size() == num_secret,
                    "[Decryptor::decrypt] Message size mismatch");
         decrypt(ctxt, sk, msg.data(), scale);
     }
 
 private:
     Polynomial
-    innerDecrypt(const Ciphertext &ctxt, const SecretKey &sk,
+    innerDecrypt(const Ciphertext &ctxt, const Polynomial &sx,
                  const std::optional<Polynomial> &ax = std::nullopt) const;
-    void decodeWithSinglePoly(const Polynomial &ptxt, CoeffMessage &coeff,
+    template <typename CMSG>
+    void decodeWithSinglePoly(const Polynomial &ptxt, CMSG &coeff,
                               Real scale) const;
-    void decodeWithPolyPair(const Polynomial &ptxt, CoeffMessage &coeff,
+    template <typename CMSG>
+    void decodeWithPolyPair(const Polynomial &ptxt, CMSG &coeff,
                             Real scale) const;
-    void decodeWithoutFFT(const Polynomial &ptxt, CoeffMessage &coeff,
+    template <typename CMSG>
+    void decodeWithoutFFT(const Polynomial &ptxt, CMSG &coeff,
                           Real scale) const;
-    void decode(const Polynomial &ptxt, Message &msg, Real scale) const;
+    template <typename MSG>
+    void decode(const Polynomial &ptxt, MSG &msg, Real scale) const;
 
-    Context context_;
-    // TODO: move to Context
-    std::vector<utils::ModArith> modarith_;
-    utils::FFTImpl<Real> fft_;
+    utils::FFT fft_;
 };
 
-#define DECL_DECRYPT_TEMPLATE_MSG(msg_t, prefix)                               \
-    prefix template void Decryptor::decrypt<msg_t>(                            \
+using Decryptor = DecryptorT<>;
+
+#define DECL_DECRYPT_TEMPLATE_MSG(preset, msg_t, prefix)                       \
+    prefix template void DecryptorT<preset>::decrypt<msg_t>(                   \
         const Ciphertext &ctxt, const SecretKey &sk, msg_t &msg, Real scale)   \
         const;                                                                 \
-    prefix template void Decryptor::decrypt<msg_t>(                            \
+    prefix template void DecryptorT<preset>::decrypt<msg_t>(                   \
         const Ciphertext &ctxt, const SecretKey &sk, msg_t *msg, Real scale)   \
-        const;
+        const;                                                                 \
+    prefix template void DecryptorT<preset>::decrypt<msg_t>(                   \
+        const Ciphertext &ctxt, const SecretKey &sk, std::vector<msg_t> &msg,  \
+        Real scale) const;
 
-#define DECRYPT_TYPE_TEMPLATE(prefix)                                          \
-    DECL_DECRYPT_TEMPLATE_MSG(Message, prefix)                                 \
-    DECL_DECRYPT_TEMPLATE_MSG(CoeffMessage, prefix)
+#define DECL_DECRYPT_TEMPLATE_DECODE(preset, prefix)                           \
+    prefix template void                                                       \
+    DecryptorT<preset>::decodeWithSinglePoly<CoeffMessage>(                    \
+        const Polynomial &ptxt, CoeffMessage &coeff, Real scale) const;        \
+    prefix template void                                                       \
+    DecryptorT<preset>::decodeWithSinglePoly<FCoeffMessage>(                   \
+        const Polynomial &ptxt, FCoeffMessage &coeff, Real scale) const;       \
+    prefix template void DecryptorT<preset>::decodeWithPolyPair<CoeffMessage>( \
+        const Polynomial &ptxt, CoeffMessage &coeff, Real scale) const;        \
+    prefix template void                                                       \
+    DecryptorT<preset>::decodeWithPolyPair<FCoeffMessage>(                     \
+        const Polynomial &ptxt, FCoeffMessage &coeff, Real scale) const;       \
+    prefix template void DecryptorT<preset>::decodeWithoutFFT<CoeffMessage>(   \
+        const Polynomial &ptxt, CoeffMessage &coeff, Real scale) const;        \
+    prefix template void DecryptorT<preset>::decodeWithoutFFT<FCoeffMessage>(  \
+        const Polynomial &ptxt, FCoeffMessage &coeff, Real scale) const;       \
+    prefix template void DecryptorT<preset>::decode<Message>(                  \
+        const Polynomial &ptxt, Message &msg, Real scale) const;               \
+    prefix template void DecryptorT<preset>::decode<FMessage>(                 \
+        const Polynomial &ptxt, FMessage &msg, Real scale) const;
 
-DECRYPT_TYPE_TEMPLATE(extern)
+#define DECRYPT_TYPE_TEMPLATE(preset, prefix)                                  \
+    prefix template class DecryptorT<preset>;                                  \
+    DECL_DECRYPT_TEMPLATE_MSG(preset, Message, prefix)                         \
+    DECL_DECRYPT_TEMPLATE_MSG(preset, FMessage, prefix)                        \
+    DECL_DECRYPT_TEMPLATE_MSG(preset, CoeffMessage, prefix)                    \
+    DECL_DECRYPT_TEMPLATE_MSG(preset, FCoeffMessage, prefix)                   \
+    DECL_DECRYPT_TEMPLATE_DECODE(preset, prefix)
+
+#define X(preset) DECRYPT_TYPE_TEMPLATE(PRESET_##preset, extern)
+PRESET_LIST_WITH_EMPTY
+#undef X
 
 } // namespace deb

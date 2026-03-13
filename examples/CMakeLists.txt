@@ -1,5 +1,5 @@
 # ~~~
-# Copyright 2025 CryptoLab, Inc.
+# Copyright 2026 CryptoLab, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -37,3 +37,7 @@ target_link_libraries(Serialization PRIVATE ${${PROJECT_NAME}_example})
 
 add_executable(KeyGeneration KeyGeneration.cpp)
 target_link_libraries(KeyGeneration PRIVATE ${${PROJECT_NAME}_example})
+
+# Custom RNG example
+add_executable(CustomRNG CustomRNG.cpp)
+target_link_libraries(CustomRNG PRIVATE ${${PROJECT_NAME}_example} sodium)

@@ -1,5 +1,5 @@
 /*
-* Copyright 2025 CryptoLab, Inc.
+* Copyright 2026 CryptoLab, Inc.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -29,6 +29,7 @@
 std::random_device rd;
 std::mt19937 gen{rd()};
 std::uniform_real_distribution<double> dist{-1.0, 1.0};
+std::uniform_int_distribution<deb::u64> dist_u64;
 
 using namespace deb;
 
@@ -52,16 +53,15 @@ static CoeffMessage gen_random_coeff(const Size degree) {
 template <Preset T>
 static void bm_seckey_encryption(benchmark::State &state) {
     const Preset preset = T;
-    const auto context = getContext(preset);
-    const auto ns = context->get_num_secret();
+    const auto ns = get_num_secret(preset);
     std::vector<Message> msg_v;
     for (Size i = 0; i < ns; ++i) {
-        msg_v.push_back(gen_random_message(context->get_num_slots()));
+        msg_v.push_back(gen_random_message(get_num_slots(preset)));
     }
 
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    Encryptor encryptor(preset);
-    Ciphertext ctxt(context);
+    EncryptorT<T> encryptor;
+    Ciphertext ctxt(preset);
 
     for (auto _ : state) {
         encryptor.encrypt(msg_v, sk, ctxt);
@@ -73,43 +73,37 @@ static void bm_seckey_encryption(benchmark::State &state) {
 template <Preset T>
 static void bm_enckey_encryption(benchmark::State &state) {
     const Preset preset = T;
-    const auto context = getContext(preset);
-    const auto ns = context->get_num_secret();
+    const auto ns = get_num_secret(preset);
     std::vector<Message> msg_v;
     for (Size i = 0; i < ns; ++i) {
-        msg_v.push_back(gen_random_message(context->get_num_slots()));
+        msg_v.push_back(gen_random_message(get_num_slots(preset)));
     }
 
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
     KeyGenerator keygen(preset);
     SwitchKey enckey = keygen.genEncKey(sk);
-    Encryptor encryptor(preset);
-
-    Ciphertext ctxt(context);
-    // std::vector<Ciphertext> ctxt_v;
+    EncryptorT<T> encryptor;
+    Ciphertext ctxt(preset);
 
     for (auto _ : state) {
-        encryptor.encrypt(msg_v, sk, ctxt);
+        encryptor.encrypt(msg_v, enckey, ctxt);
         benchmark::DoNotOptimize(ctxt);
         benchmark::ClobberMemory();
-        // ctxt_v.push_back(ctxt);
     }
 }
 
 template <Preset T> static void bm_decryption(benchmark::State &state) {
     const Preset preset = T;
-    const auto context = getContext(preset);
-    const auto ns = context->get_num_secret();
+    const auto ns = get_num_secret(preset);
     std::vector<Message> msg_v;
     for (Size i = 0; i < ns; ++i) {
-        msg_v.push_back(gen_random_message(context->get_num_slots()));
+        msg_v.push_back(gen_random_message(get_num_slots(preset)));
     }
 
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    Encryptor encryptor(preset);
-    Decryptor decryptor(preset);
-
-    Ciphertext ctxt(context);
+    EncryptorT<T> encryptor;
+    DecryptorT<T> decryptor;
+    Ciphertext ctxt(preset);
     encryptor.encrypt(msg_v, sk, ctxt);
 
     for (auto _ : state) {
@@ -122,66 +116,57 @@ template <Preset T> static void bm_decryption(benchmark::State &state) {
 template <Preset T>
 static void bm_seckey_coeff_encryption(benchmark::State &state) {
     const Preset preset = T;
-    const auto context = getContext(preset);
-    const auto ns = context->get_num_secret();
+    const auto ns = get_num_secret(preset);
     std::vector<CoeffMessage> msg_v;
     for (Size i = 0; i < ns; ++i) {
-        msg_v.push_back(gen_random_coeff(context->get_degree()));
+        msg_v.push_back(gen_random_coeff(get_degree(preset)));
     }
 
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    Encryptor encryptor(preset);
-
-    Ciphertext ctxt(context);
-    // std::vector<Ciphertext> ctxt_v;
+    EncryptorT<T> encryptor;
+    Ciphertext ctxt(preset);
 
     for (auto _ : state) {
         encryptor.encrypt(msg_v, sk, ctxt);
         benchmark::DoNotOptimize(ctxt);
         benchmark::ClobberMemory();
-        // ctxt_v.push_back(ctxt);
     }
 }
 
 template <Preset T>
 static void bm_enckey_coeff_encryption(benchmark::State &state) {
     const Preset preset = T;
-    const auto context = getContext(preset);
-    const auto ns = context->get_num_secret();
+    const auto ns = get_num_secret(preset);
     std::vector<CoeffMessage> msg_v;
     for (Size i = 0; i < ns; ++i) {
-        msg_v.push_back(gen_random_coeff(context->get_degree()));
+        msg_v.push_back(gen_random_coeff(get_degree(preset)));
     }
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
     KeyGenerator keygen(preset);
     SwitchKey enckey = keygen.genEncKey(sk);
-    Encryptor encryptor(preset);
-
-    Ciphertext ctxt(context);
-    // std::vector<Ciphertext> ctxt_v;
+    EncryptorT<T> encryptor;
+    Ciphertext ctxt(preset);
 
     for (auto _ : state) {
-        encryptor.encrypt(msg_v, sk, ctxt);
+        encryptor.encrypt(msg_v, enckey, ctxt);
         benchmark::DoNotOptimize(ctxt);
         benchmark::ClobberMemory();
-        // ctxt_v.push_back(ctxt);
     }
 }
 
 template <Preset T>
 static void bm_coeff_decryption(benchmark::State &state) {
     const Preset preset = T;
-    const auto context = getContext(preset);
-    const auto ns = context->get_num_secret();
+    const auto ns = get_num_secret(preset);
     std::vector<CoeffMessage> msg_v;
     for (Size i = 0; i < ns; ++i) {
-        msg_v.push_back(gen_random_coeff(context->get_degree()));
+        msg_v.push_back(gen_random_coeff(get_degree(preset)));
     }
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    Encryptor encryptor(preset);
-    Decryptor decryptor(preset);
+    EncryptorT<T> encryptor(preset);
+    DecryptorT<T> decryptor(preset);
 
-    Ciphertext ctxt(context);
+    Ciphertext ctxt(preset);
     encryptor.encrypt(msg_v, sk, ctxt);
 
     for (auto _ : state) {
@@ -191,19 +176,58 @@ static void bm_coeff_decryption(benchmark::State &state) {
     }
 }
 
-#define X(PRESET)                                                                   \
-    BENCHMARK_TEMPLATE(bm_seckey_encryption, Preset::PRESET_##PRESET)     \
-        ->Unit(benchmark::kMicrosecond);                                            \
-    BENCHMARK_TEMPLATE(bm_enckey_encryption, Preset::PRESET_##PRESET)     \
-        ->Unit(benchmark::kMicrosecond);                                            \
-    BENCHMARK_TEMPLATE(bm_decryption, Preset::PRESET_##PRESET)            \
-        ->Unit(benchmark::kMicrosecond);                                            \
+template <Size degree, u64 prime>
+static void bm_forward_ntt(benchmark::State &state) {
+    utils::NTT ntt(degree, prime);
+    u64 data[degree];
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        for (Size i = 0; i < degree; ++i) {
+            data[i] = dist_u64(gen) % prime;
+        }
+        state.ResumeTiming();
+        ntt.computeForward(data);
+        benchmark::DoNotOptimize(data);
+        benchmark::ClobberMemory();
+    }
+}
+
+template <Size degree, u64 prime>
+static void bm_backward_ntt(benchmark::State &state) {
+    utils::NTT ntt(degree, prime);
+    u64 data[degree];
+
+    for (auto _ : state) {
+        state.PauseTiming();
+        for (Size i = 0; i < degree; ++i) {
+            data[i] = dist_u64(gen) % prime;
+        }
+        ntt.computeForward(data);
+        state.ResumeTiming();
+        ntt.computeBackward(data);
+        benchmark::DoNotOptimize(data);
+        benchmark::ClobberMemory();
+    }
+}
+
+#define X(PRESET)                                                           \
+    BENCHMARK_TEMPLATE(bm_seckey_encryption, Preset::PRESET_##PRESET)       \
+        ->Unit(benchmark::kMicrosecond);                                    \
+    BENCHMARK_TEMPLATE(bm_enckey_encryption, Preset::PRESET_##PRESET)       \
+        ->Unit(benchmark::kMicrosecond);                                    \
+    BENCHMARK_TEMPLATE(bm_decryption, Preset::PRESET_##PRESET)              \
+        ->Unit(benchmark::kMicrosecond);                                    \
     BENCHMARK_TEMPLATE(bm_seckey_coeff_encryption, Preset::PRESET_##PRESET) \
-        ->Unit(benchmark::kMicrosecond);                                            \
+        ->Unit(benchmark::kMicrosecond);                                    \
     BENCHMARK_TEMPLATE(bm_enckey_coeff_encryption, Preset::PRESET_##PRESET) \
-        ->Unit(benchmark::kMicrosecond);                                            \
-    BENCHMARK_TEMPLATE(bm_coeff_decryption, Preset::PRESET_##PRESET)      \
+        ->Unit(benchmark::kMicrosecond);                                    \
+    BENCHMARK_TEMPLATE(bm_coeff_decryption, Preset::PRESET_##PRESET)        \
         ->Unit(benchmark::kMicrosecond);
 
 PRESET_LIST
 #undef X
+
+BENCHMARK_TEMPLATE(bm_forward_ntt, 65536, 288230376147386369)->Unit(benchmark::kMicrosecond);
+BENCHMARK_TEMPLATE(bm_backward_ntt, 65536, 288230376147386369)
+    ->Unit(benchmark::kMicrosecond);

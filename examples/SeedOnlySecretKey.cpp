@@ -1,5 +1,5 @@
 /*
-* Copyright 2025 CryptoLab, Inc.
+* Copyright 2026 CryptoLab, Inc.
 *
 * Licensed under the Apache License, Version 2.0 (the "License");
 * you may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@ using namespace deb;
 
 int main() {
     Preset preset = static_cast<Preset>(0);
-    std::cout << "Preset: " << getContext(preset)->get_preset_name() << std::endl;
+    std::cout << "Preset: " << get_preset_name(preset) << std::endl;
 
     // Generate seed for secret key
     RNGSeed sk_seed = SeedGenerator::Gen();

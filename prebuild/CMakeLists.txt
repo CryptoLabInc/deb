@@ -1,5 +1,5 @@
 # ~~~
-# Copyright 2025 CryptoLab, Inc.
+# Copyright 2026 CryptoLab, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -84,11 +84,12 @@ if(CMAKE_CROSSCOMPILING)
   add_custom_command(
     OUTPUT ${HOST_GENPARAM_DIR}/CMakeCache.txt
     COMMAND
-      ${CMAKE_COMMAND} -S ${PRE_BUILD_DIR} -B ${HOST_GENPARAM_DIR}
+      ${CMAKE_COMMAND} -S ${PRE_BUILD_SRC_DIR} -B ${HOST_GENPARAM_DIR}
       -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE= -DANDROID=OFF
       -DCMAKE_C_COMPILER=${HOST_CC} -DCMAKE_CXX_COMPILER=${HOST_CXX}
       -DCMAKE_CXX_STANDARD=17 -DCMAKE_CXX_STANDARD_REQUIRED=ON
       -DPREBUILD_HOST_MODE=ON -DPRE_BUILD_DIR=${PRE_BUILD_DIR}
+      -DPRE_BUILD_SRC_DIR=${PRE_BUILD_SRC_DIR}
     COMMENT "Configuring host GenParam with GCC"
     VERBATIM COMMAND_EXPAND_LISTS)
 

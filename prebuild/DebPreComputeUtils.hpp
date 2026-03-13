@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 CryptoLab, Inc.
+ * Copyright 2026 CryptoLab, Inc.
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -421,7 +421,6 @@ resolve_one(const std::string &name,
         out.RANK = cr.RANK;
         out.NUM_SECRET = cr.NUM_SECRET;
         out.GADGET_RANK = cr.GADGET_RANK;
-        const uint32_t degree = 1u << out.LOG_DEGREE;
         out.HWT = cr.HWT;
 
         out.PRIMES =
@@ -499,17 +498,15 @@ static void write_header(const std::string &out_path,
     os << "#pragma once\n\n";
     os << "#include <cstdint>\n";
     os << "#include <cinttypes>\n";
-    os << "#include <vector>\n";
-    os << "#include <string>\n";
-    os << "#include <unordered_map>\n";
     os << "\n";
     os << "#include \"Types.hpp\"\n";
+    os << "namespace deb {\n\n";
     os << "#define PRESET_LIST";
     for (const auto &final : finals) {
         os << " ";
         os << "X(" << final.NAME << ")";
     }
-    os << "\nnamespace deb {\n\n";
+    os << "\n#define PRESET_LIST_WITH_EMPTY PRESET_LIST X(EMPTY)\n\n";
 
     os << "enum Preset {\n";
     for (const auto &final : finals) {
@@ -580,6 +577,25 @@ static void write_header(const std::string &out_path,
            << "};\n\n";
     }
 
+    // PresetTraits
+    // os << "template <Preset> struct PresetTraits;\n";
+    // os << "#define X(preset) template <> struct PresetTraits<PRESET_##preset>
+    // "
+    //      ": public preset {};\n";
+    // os << "PRESET_LIST\n";
+    // os << "#undef X\n";
+
+    // Degree set
+    std::unordered_set<uint32_t> degrees;
+    for (const auto &p : finals_copy) {
+        degrees.insert(1u << p.LOG_DEGREE);
+    }
+    // degrees.erase(1); // remove degree 1
+    os << "#define DEGREE_SET \\\n";
+    for (const auto &d : degrees) {
+        os << "D(" << d << ") ";
+    }
+    os << "\n";
     os << "} // namespace deb\n";
     os.close();
 }

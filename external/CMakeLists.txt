@@ -1,5 +1,5 @@
 # ~~~
-# Copyright 2025 CryptoLab, Inc.
+# Copyright 2026 CryptoLab, Inc.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -22,7 +22,7 @@ cpmaddpackage(
   GITHUB_REPOSITORY
   CryptoLabInc/alea
   GIT_TAG
-  v0.1.6
+  v0.1.7
   OPTIONS
   "ALEA_BUILD_TEST OFF"
   "ALEA_BUILD_DOXYGEN ${DEB_BUILD_DOXYGEN}"
@@ -44,3 +44,14 @@ cpmaddpackage(
 set(flatbuffers_SOURCE_DIR
     ${flatbuffers_SOURCE_DIR}
     CACHE PATH "" FORCE)
+
+string(TOUPPER "${DEB_EXT_LIB_FOR_SECURE_ZERO}" _deb_secure_zero_backend)
+
+if(_deb_secure_zero_backend STREQUAL "LIBSODIUM" OR DEB_BUILD_EXAMPLES)
+  set(SODIUM_DISABLE_TESTS ON)
+  cpmaddpackage(NAME sodium GITHUB_REPOSITORY robinlinden/libsodium-cmake
+                GIT_TAG master)
+endif()
+if(_deb_secure_zero_backend STREQUAL "OPENSSL")
+  find_package(OpenSSL REQUIRED COMPONENTS Crypto)
+endif()
