@@ -131,10 +131,9 @@ Polynomial::Polynomial(const Preset preset, const bool full_level) {
     dealloc_ptr_ = std::shared_ptr<u64[]>(new u64[num_poly * degree],
                                           std::default_delete<u64[]>());
 #else
-    auto *buf = static_cast<u64 *>(::operator new[](
-        sizeof(u64) * num_poly * degree, std::align_val_t(DEB_ALINAS_LEN)));
-    dealloc_ptr_ = std::shared_ptr<u64[]>(buf, [buf](u64 *p) {
-        ::operator delete[](buf, std::align_val_t(DEB_ALINAS_LEN));
+    auto *buf = static_cast<u64 *>(std::aligned_alloc(DEB_ALINAS_LEN, sizeof(u64) * num_poly * degree));
+    dealloc_ptr_ = std::shared_ptr<u64[]>(buf, [](u64 *p) {
+        std::free(p);
     });
 #endif
     for (Size l = 0; l < num_poly; ++l) {
@@ -148,10 +147,9 @@ Polynomial::Polynomial(const Preset preset, const Size custom_size) {
     dealloc_ptr_ = std::shared_ptr<u64[]>(new u64[custom_size * degree],
                                           std::default_delete<u64[]>());
 #else
-    auto *buf = static_cast<u64 *>(::operator new[](
-        sizeof(u64) * custom_size * degree, std::align_val_t(DEB_ALINAS_LEN)));
-    dealloc_ptr_ = std::shared_ptr<u64[]>(buf, [buf](u64 *p) {
-        ::operator delete[](buf, std::align_val_t(DEB_ALINAS_LEN));
+    auto *buf = static_cast<u64 *>(std::aligned_alloc(DEB_ALINAS_LEN, sizeof(u64) * custom_size * degree));
+    dealloc_ptr_ = std::shared_ptr<u64[]>(buf, [](u64 *p) {
+        std::free(p);
     });
 #endif
     for (Size l = 0; l < custom_size; ++l) {
@@ -187,7 +185,7 @@ Polynomial Polynomial::deepCopy(std::optional<Size> num_polyunit) const {
 #endif
         for (Size i = 0; i < num_polyunit_val; ++i) {
             copy.polyunits_.emplace_back(polyunits_[i].prime(),
-                                         polyunits_[i].degree(), true);
+                                         0, false);
             copy.polyunits_[i].setNTT(polyunits_[i].isNTT());
             copy.polyunits_[i].setData(copy.dealloc_ptr_.get() +
                                            i * polyunits_[i].degree(),
