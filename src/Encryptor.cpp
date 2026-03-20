@@ -22,21 +22,20 @@
 #endif
 
 namespace {
-    inline deb::Size div_ceil_32(Size degree) {
-        return (degree + 31) / 32;
-    }
-    inline deb::Size buffer_size(Size degree) {
-        return degree + dev_ceil_32(degree);
-    }
+inline uint32_t div_ceil_32(uint32_t degree) { return (degree + 31) / 32; }
+inline uint32_t buffer_size(uint32_t degree) {
+    return degree + div_ceil_32(degree);
 }
+} // namespace
 
 namespace deb {
 
 template <Preset P>
 EncryptorT<P>::EncryptorT(std::optional<const RNGSeed> seeds)
     : PresetTraits<P>(preset), ptxt_buffer_(preset, num_p * num_secret),
-      vx_buffer_(preset, true), ex_buffer_(preset, true), samples_(buffer_size(degree)),
-      mask_(degree), i_samples_(degree), fft_(degree) {
+      vx_buffer_(preset, true), ex_buffer_(preset, true),
+      samples_(buffer_size(degree)), mask_(degree), i_samples_(degree),
+      fft_(degree) {
     if constexpr (P == PRESET_EMPTY) {
         throw std::runtime_error(
             "[Encryptor] Preset template must be specified when using this "
@@ -59,7 +58,8 @@ EncryptorT<P>::EncryptorT(Preset actual_preset,
     : PresetTraits<P>(actual_preset),
       ptxt_buffer_(actual_preset, num_p * num_secret),
       vx_buffer_(actual_preset, true), ex_buffer_(actual_preset, true),
-      samples_(buffer_size(degree)), mask_(degree), i_samples_(degree), fft_(degree) {
+      samples_(buffer_size(degree)), mask_(degree), i_samples_(degree),
+      fft_(degree) {
 
     for (Size i = 0; i < num_p; ++i) {
         modarith.emplace_back(degree, primes[i]);
@@ -77,8 +77,8 @@ EncryptorT<P>::EncryptorT(Preset actual_preset,
     : PresetTraits<P>(actual_preset),
       ptxt_buffer_(actual_preset, num_p * num_secret),
       vx_buffer_(actual_preset, true), ex_buffer_(actual_preset, true),
-      samples_(buffer_size(degree)), mask_(degree), i_samples_(degree), rng_(std::move(rng)),
-      fft_(degree) {
+      samples_(buffer_size(degree)), mask_(degree), i_samples_(degree),
+      rng_(std::move(rng)), fft_(degree) {
 
     for (Size i = 0; i < num_p; ++i) {
         modarith.emplace_back(degree, primes[i]);
@@ -357,13 +357,13 @@ template <Preset P> void EncryptorT<P>::sampleZO(Size num_polyunit) const {
 
     PRAGMA_OMP(omp single) {
         vx_buffer_.setNTT(false);
-        // Since this method is in a OMP parallel region, we cannot make local array
-        // So sample data into the end of class variable samples_
+        // Since this method is in a OMP parallel region, we cannot make local
+        // array So sample data into the end of class variable samples_
         rng_->getRandomUint64Array(samples_.data() + degree, sample_size);
     }
 
     PRAGMA_OMP(omp for schedule(static))
-    for (Size i = 0; i < degree ; ++i) {
+    for (Size i = 0; i < degree; ++i) {
         const Size bit_offset = static_cast<Size>((i % 32) * 2);
         const u64 rnd = samples_[degree + i / 32] >> bit_offset;
         // mask is 0xFFFFFFFF if bit is 1, 0x0 if bit is 0
