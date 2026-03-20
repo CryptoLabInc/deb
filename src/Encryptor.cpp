@@ -26,7 +26,7 @@ namespace deb {
 template <Preset P>
 EncryptorT<P>::EncryptorT(std::optional<const RNGSeed> seeds)
     : PresetTraits<P>(preset), ptxt_buffer_(preset, num_p * num_secret),
-      vx_buffer_(preset, true), ex_buffer_(preset, true), samples_(degree),
+      vx_buffer_(preset, true), ex_buffer_(preset, true), samples_(degree + 1),
       mask_(degree), i_samples_(degree), fft_(degree) {
     if constexpr (P == PRESET_EMPTY) {
         throw std::runtime_error(
@@ -50,7 +50,7 @@ EncryptorT<P>::EncryptorT(Preset actual_preset,
     : PresetTraits<P>(actual_preset),
       ptxt_buffer_(actual_preset, num_p * num_secret),
       vx_buffer_(actual_preset, true), ex_buffer_(actual_preset, true),
-      samples_(degree), mask_(degree), i_samples_(degree), fft_(degree) {
+      samples_(degree + 1), mask_(degree), i_samples_(degree), fft_(degree) {
 
     for (Size i = 0; i < num_p; ++i) {
         modarith.emplace_back(degree, primes[i]);
@@ -68,7 +68,7 @@ EncryptorT<P>::EncryptorT(Preset actual_preset,
     : PresetTraits<P>(actual_preset),
       ptxt_buffer_(actual_preset, num_p * num_secret),
       vx_buffer_(actual_preset, true), ex_buffer_(actual_preset, true),
-      samples_(degree), mask_(degree), i_samples_(degree), rng_(std::move(rng)),
+      samples_(degree + 1), mask_(degree), i_samples_(degree), rng_(std::move(rng)),
       fft_(degree) {
 
     for (Size i = 0; i < num_p; ++i) {
@@ -340,21 +340,22 @@ void EncryptorT<P>::encodeWithoutNTT(const MSG &msg, Polynomial &ptxt,
             "[Encryptor::encodeWithoutNTT] Unsupported message type");
     }
 }
-
 template <Preset P> void EncryptorT<P>::sampleZO(Size num_polyunit) const {
 
-    const auto u64_sample_size = std::max(degree, Size(32)) / 32;
-    std::vector<u64> u64_samples(u64_sample_size);
+    // We sample 64 bits at a time and use 2 bits for each coefficient to sample
+    const auto sample_size = std::max(degree, Size(32)) / 32;
 
     PRAGMA_OMP(omp single) {
         vx_buffer_.setNTT(false);
-        rng_->getRandomUint64Array(u64_samples.data(), u64_sample_size);
+        // Since this method is in a OMP parallel region, we cannot make local array.
+        // So sample data into the end of class variable samples_.
+        rng_->getRandomUint64Array(samples_.data() + degree - sample_size, sample_size);
     }
 
     PRAGMA_OMP(omp for schedule(static))
     for (Size i = 0; i < degree ; ++i) {
         const Size bit_offset = static_cast<Size>((i % 32) * 2);
-        const u64 rnd = u64_samples[i / 32] >> bit_offset;
+        const u64 rnd = samples_[degree - sample_size + i / 32] >> bit_offset;
         // mask is 0xFFFFFFFF if bit is 1, 0x0 if bit is 0
         mask_[i] = 0UL - ((rnd & 2) >> 1);
         samples_[i] = (rnd & 1);
