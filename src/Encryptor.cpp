@@ -21,13 +21,21 @@
 #include <omp.h>
 #endif
 
+namespace {
+inline uint32_t div_ceil_32(uint32_t degree) { return (degree + 31) / 32; }
+inline uint32_t buffer_size(uint32_t degree) {
+    return degree + div_ceil_32(degree);
+}
+} // namespace
+
 namespace deb {
 
 template <Preset P>
 EncryptorT<P>::EncryptorT(std::optional<const RNGSeed> seeds)
     : PresetTraits<P>(preset), ptxt_buffer_(preset, num_p * num_secret),
-      vx_buffer_(preset, true), ex_buffer_(preset, true), samples_(degree),
-      mask_(degree), i_samples_(degree), fft_(degree) {
+      vx_buffer_(preset, true), ex_buffer_(preset, true),
+      samples_(buffer_size(degree)), mask_(degree), i_samples_(degree),
+      fft_(degree) {
     if constexpr (P == PRESET_EMPTY) {
         throw std::runtime_error(
             "[Encryptor] Preset template must be specified when using this "
@@ -50,7 +58,8 @@ EncryptorT<P>::EncryptorT(Preset actual_preset,
     : PresetTraits<P>(actual_preset),
       ptxt_buffer_(actual_preset, num_p * num_secret),
       vx_buffer_(actual_preset, true), ex_buffer_(actual_preset, true),
-      samples_(degree), mask_(degree), i_samples_(degree), fft_(degree) {
+      samples_(buffer_size(degree)), mask_(degree), i_samples_(degree),
+      fft_(degree) {
 
     for (Size i = 0; i < num_p; ++i) {
         modarith.emplace_back(degree, primes[i]);
@@ -68,8 +77,8 @@ EncryptorT<P>::EncryptorT(Preset actual_preset,
     : PresetTraits<P>(actual_preset),
       ptxt_buffer_(actual_preset, num_p * num_secret),
       vx_buffer_(actual_preset, true), ex_buffer_(actual_preset, true),
-      samples_(degree), mask_(degree), i_samples_(degree), rng_(std::move(rng)),
-      fft_(degree) {
+      samples_(buffer_size(degree)), mask_(degree), i_samples_(degree),
+      rng_(std::move(rng)), fft_(degree) {
 
     for (Size i = 0; i < num_p; ++i) {
         modarith.emplace_back(degree, primes[i]);
@@ -340,25 +349,26 @@ void EncryptorT<P>::encodeWithoutNTT(const MSG &msg, Polynomial &ptxt,
             "[Encryptor::encodeWithoutNTT] Unsupported message type");
     }
 }
-
 template <Preset P> void EncryptorT<P>::sampleZO(Size num_polyunit) const {
 
-    // const auto pad_degree = std::max(degree, Size(32));
-    const auto pad_num = std::max(degree, Size(32)) / 32;
-    // std::vector<u64> random_vector(pad_degree);
+    // We sample 64 bits at a time and use 2 bits for each coefficient to sample
+    // Assume degree is larger than 32.
+    const auto sample_size = div_ceil_32(degree);
 
     PRAGMA_OMP(omp single) {
         vx_buffer_.setNTT(false);
-        rng_->getRandomUint64Array(samples_.data() + degree - pad_num, pad_num);
+        // Since this method is in a OMP parallel region, we cannot make local
+        // array So sample data into the end of class variable samples_
+        rng_->getRandomUint64Array(samples_.data() + degree, sample_size);
     }
 
     PRAGMA_OMP(omp for schedule(static))
     for (Size i = 0; i < degree; ++i) {
-        u64 &rnd = samples_[i / 32];
+        const Size bit_offset = static_cast<Size>((i % 32) * 2);
+        const u64 rnd = samples_[degree + i / 32] >> bit_offset;
         // mask is 0xFFFFFFFF if bit is 1, 0x0 if bit is 0
         mask_[i] = 0UL - ((rnd & 2) >> 1);
         samples_[i] = (rnd & 1);
-        rnd >>= 2;
     }
 
     PRAGMA_OMP(omp for collapse(2) schedule(static))
