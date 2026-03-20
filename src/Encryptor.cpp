@@ -343,25 +343,22 @@ void EncryptorT<P>::encodeWithoutNTT(const MSG &msg, Polynomial &ptxt,
 
 template <Preset P> void EncryptorT<P>::sampleZO(Size num_polyunit) const {
 
-    // const auto pad_degree = std::max(degree, Size(32));
-    const auto pad_num = std::max(degree, Size(32)) / 32;
-    // std::vector<u64> random_vector(pad_degree);
+    const auto u64_sample_size = std::max(degree, Size(32)) / 32;
+    std::vector<u64> u64_samples(u64_sample_size);
 
     PRAGMA_OMP(omp single) {
         vx_buffer_.setNTT(false);
-        rng_->getRandomUint64Array(samples_.data() + degree - pad_num, pad_num);
+        rng_->getRandomUint64Array(u64_samples.data(), u64_sample_size);
     }
 
     PRAGMA_OMP(omp for schedule(static))
-    for (Size i = 0; i < degree - 1; ++i) {
-        u64 &rnd = samples_[degree - pad_num + i / 32];
+    for (Size i = 0; i < degree ; ++i) {
+        u64 &rnd = u64_samples[i / 32];
         // mask is 0xFFFFFFFF if bit is 1, 0x0 if bit is 0
         mask_[i] = 0UL - ((rnd & 2) >> 1);
         samples_[i] = (rnd & 1);
         rnd >>= 2;
     }
-    mask_[degree - 1] = 0UL - ((samples_[degree - 1] & 2) >> 1);
-    samples_[degree - 1] &= 1;
 
     PRAGMA_OMP(omp for collapse(2) schedule(static))
     for (Size i = 0; i < num_polyunit; ++i) {
