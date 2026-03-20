@@ -353,11 +353,11 @@ template <Preset P> void EncryptorT<P>::sampleZO(Size num_polyunit) const {
 
     PRAGMA_OMP(omp for schedule(static))
     for (Size i = 0; i < degree ; ++i) {
-        u64 &rnd = u64_samples[i / 32];
+        const Size bit_offset = static_cast<Size>((i % 32) * 2);
+        const u64 rnd = u64_samples[i / 32] >> bit_offset;
         // mask is 0xFFFFFFFF if bit is 1, 0x0 if bit is 0
         mask_[i] = 0UL - ((rnd & 2) >> 1);
         samples_[i] = (rnd & 1);
-        rnd >>= 2;
     }
 
     PRAGMA_OMP(omp for collapse(2) schedule(static))
