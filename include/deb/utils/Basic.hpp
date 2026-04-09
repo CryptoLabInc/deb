@@ -264,6 +264,34 @@ inline u64 u128Hi(const u128 value) { return static_cast<u64>(value >> 64); }
  */
 inline u64 u128Lo(const u128 value) { return static_cast<u64>(value); }
 
+// ---------------------------------------------------------------------------
+// UnitTypeTraits: maps a coefficient word type to its double-width and
+// accumulator types, plus the bit-width constant used in Barrett / Shoup
+// precomputations.
+// ---------------------------------------------------------------------------
+
+/**
+ * @brief Trait struct mapping a unit coefficient type to wider arithmetic
+ * types and bit-width metadata used throughout modular-arithmetic helpers.
+ *
+ * Specialisations are provided for u32 and u64.
+ *
+ * @tparam U Coefficient word type (u32 or u64).
+ */
+template <typename U> struct UnitTypeTraits;
+
+template <> struct UnitTypeTraits<u32> {
+    using Wide = u64;       ///< u32 × u32 product type
+    using SuperWide = u128; ///< accumulator for many products
+    static constexpr unsigned bits = 32;
+};
+
+template <> struct UnitTypeTraits<u64> {
+    using Wide = u128;      ///< u64 × u64 product type
+    using SuperWide = u128; ///< accumulator (same; no wider type available)
+    static constexpr unsigned bits = 64;
+};
+
 /**
  * @brief Multiplies two 64-bit integers yielding a 128-bit product.
  * @param op1 Multiplicand.
@@ -314,9 +342,37 @@ inline u64 powModSimple(u64 base, u64 expo, const u64 mod) {
     return res;
 }
 
-inline u64 mulModLazy(const u64 op1, const u64 op2, const u64 op2_barrett,
-                      const u64 mod) {
-    return op1 * op2 - mul64To128Hi(op1, op2_barrett) * mod;
+/**
+ * @brief Lazy modular multiplication using Shoup's precomputed Barrett value.
+ *
+ * Computes op1 * op2 (mod mod) with a "lazy" reduction: the result is in
+ * [0, 2·mod) rather than [0, mod).  op2_barrett must equal
+ * floor(op2 · 2^bits / mod) where bits = sizeof(U)·8.
+ *
+ * Works for U = u32 (Wide = u64) and U = u64 (Wide = u128).
+ *
+ * @tparam U Unsigned word type.
+ */
+template <typename U> inline U mulModLazy(U op1, U op2, U op2_barrett, U mod) {
+    using Wide = typename UnitTypeTraits<U>::Wide;
+    const Wide quot =
+        (static_cast<Wide>(op1) * op2_barrett) >> UnitTypeTraits<U>::bits;
+    return static_cast<U>(static_cast<Wide>(op1) * op2 -
+                          static_cast<Wide>(quot) * mod);
+}
+
+/**
+ * @brief Compute Shoup's precomputed Barrett value for lazy reduction.
+ *
+ * Returns floor(val · 2^bits / prime) where bits = sizeof(U)·8.
+ * Used to precompute the second argument to mulModLazy.
+ *
+ * @tparam U Unsigned word type (u32 or u64).
+ */
+template <typename U> inline U computeShoup(U val, U prime) {
+    using Wide = typename UnitTypeTraits<U>::Wide;
+    return static_cast<U>((static_cast<Wide>(val) << UnitTypeTraits<U>::bits) /
+                          prime);
 }
 
 /**
@@ -415,13 +471,29 @@ template <typename T> void bitReverseArray(T *data, u64 n) {
 }
 
 /**
- * @brief Subtracts b from a when a is greater or equal, otherwise returns a.
+ * @brief Subtracts b from a when a >= b, otherwise returns a unchanged.
+ * @tparam U Unsigned integer type (u32 or u64).
  */
-inline u64 subIfGE(u64 a, u64 b) { return (a >= b) ? (a - b) : a; }
+template <typename U> inline U subIfGE(U a, U b) {
+    return (a >= b) ? static_cast<U>(a - b) : a;
+}
 
-inline u64 subIfGEConst(u64 a, u64 b) {
-    // mask is 0xFFFFFFFF if a >= b, 0x0 if a < b
-    const u64 mask = ((a - b) >> 63) - 1;
+/**
+ * @brief Branchless version of subIfGE.
+ *
+ * Uses the sign bit of (a − b) to form a mask that either subtracts b or
+ * leaves a unchanged, with no data-dependent branches.
+ * Assume (a - b) < 2^32 for U=u32 or (a - b) < 2^64 for U=u64.
+ *
+ * @tparam U Unsigned integer type (u32 or u64).
+ */
+template <typename U> inline U subIfGEConst(U a, U b) {
+    // If a >= b: (a-b) has MSB=0, >>bits-1 == 0, mask = 0-1 = all-ones →
+    // subtract b. If a <  b: (a-b) wraps, MSB=1, >>bits-1 == 1, mask = 1-1 = 0
+    // → keep a
+    const U mask =
+        static_cast<U>(static_cast<U>(a - b) >> (UnitTypeTraits<U>::bits - 1)) -
+        U(1);
     return a - (b & mask);
 }
 

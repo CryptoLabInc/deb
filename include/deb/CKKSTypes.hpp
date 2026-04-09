@@ -144,48 +144,56 @@ using FCoeffMessage = CoeffMessageImpl<float>;
 
 MESSAGE_TYPE_TEMPLATE(extern)
 
+// =========================================================================
+// PolyUnitT<U>
+// =========================================================================
+
 /**
  * @brief Represents a per-prime polynomial segment used inside ciphertexts or
  * keys.
+ *
+ * @tparam U Coefficient word type (u32 or u64, default u64).
  */
-class PolyUnit {
+template <typename U = u64> class PolyUnitT {
 public:
-    PolyUnit() = delete;
+    PolyUnitT() = delete;
     /**
      * @brief Initializes the unit for a preset at a specific modulus level.
      * @param preset Preset describes modulus chain metadata.
      * @param level Target modulus index.
-     * @param alloc True to allocate storage, false to create an zero-allocated
+     * @param alloc True to allocate storage, false to create a zero-allocated
      * object.
      */
-    explicit PolyUnit(const Preset preset, const Size level,
-                      const bool alloc = true);
+    explicit PolyUnitT(const Preset preset, const Size level,
+                       const bool alloc = true);
 
     /**
      * @brief Constructs a unit with explicit modulus and degree configuration.
+     *
+     * The prime is accepted as u64 for compatibility with preset tables; it is
+     * narrowed to U internally.
+     *
      * @param prime Prime modulus value.
      * @param degree Number of coefficients.
-     * @param alloc True to allocate storage, false to create an zero-allocated
-     * object.
+     * @param alloc True to allocate storage.
      */
-    explicit PolyUnit(u64 prime, Size degree, const bool alloc = true);
+    explicit PolyUnitT(u64 prime, Size degree, const bool alloc = true);
 
     /**
      * @brief Creates a full copy of the unit including coefficient storage.
      */
-    PolyUnit deepCopy() const;
+    PolyUnitT deepCopy() const;
     /**
      * @brief Updates the active modulus.
-     * @param prime New prime modulus.
+     * @param prime New prime modulus (u64, narrowed to U).
      */
     void setPrime(u64 prime) noexcept;
     /**
      * @brief Returns the current modulus.
      */
-    u64 prime() const noexcept;
+    U prime() const noexcept;
     /**
      * @brief Marks the coefficient representation as NTT or standard domain.
-     * @param ntt_state True when data is in NTT domain.
      */
     void setNTT(bool ntt_state) noexcept;
     /**
@@ -198,75 +206,66 @@ public:
     Size degree() const noexcept;
     /**
      * @brief Mutable coefficient accessor without bounds checks.
-     * @param index Coefficient index.
      */
-    u64 &operator[](Size index) noexcept { return data_ptr_.get()[index]; }
+    U &operator[](Size index) noexcept { return data_ptr_.get()[index]; }
     /**
      * @brief Const coefficient accessor without bounds checks.
-     * @param index Coefficient index.
      */
-    u64 operator[](Size index) const noexcept { return data_ptr_.get()[index]; }
+    U operator[](Size index) const noexcept { return data_ptr_.get()[index]; }
     /**
      * @brief Returns a mutable pointer to coefficient storage.
      */
-    u64 *data() const noexcept { return data_ptr_.get(); }
+    U *data() const noexcept { return data_ptr_.get(); }
     /**
      * @brief Sets an externally managed storage buffer.
-     * @param new_data Pointer to caller-managed coefficients.
-     * @param size Number of coefficients pointed to by @p new_data.
      */
-    void setData(u64 *new_data, Size size);
+    void setData(U *new_data, Size size);
 
 private:
-    u64 prime_;
+    U prime_;
     bool ntt_state_;
     Size degree_;
-    std::shared_ptr<u64[]> data_ptr_;
+    std::shared_ptr<U[]> data_ptr_;
 };
 
+// =========================================================================
+// PolynomialT<U>
+// =========================================================================
+
 /**
- * @brief Collection of PolyUnit instances representing a multi-level
+ * @brief Collection of PolyUnitT instances representing a multi-level
  * polynomial.
+ *
+ * @tparam U Coefficient word type (u32 or u64, default u64).
  */
-class Polynomial {
+template <typename U = u64> class PolynomialT {
 public:
-    Polynomial() = delete;
+    PolynomialT() = delete;
     /**
      * @brief Constructs a polynomial for a preset with optional full level
      * allocation.
-     * @param preset Preset that describes modulus chain metadata.
-     * @param full_level True to allocate every modulus level,
-     * false to allocate only the default encryption level.
      */
-    explicit Polynomial(const Preset preset, const bool full_level = false);
+    explicit PolynomialT(const Preset preset, const bool full_level = false);
     /**
-     * @brief Constructs with a custom number of PolyUnit entries.
-     * @param preset Preset that describes modulus chain metadata.
-     * @param custom_size Number of PolyUnit slots.
+     * @brief Constructs with a custom number of PolyUnitT entries.
      */
-    explicit Polynomial(const Preset preset, const Size custom_size);
+    explicit PolynomialT(const Preset preset, const Size custom_size);
     /**
      * @brief Copies slices of another polynomial.
-     * @param other Source polynomial.
-     * @param others_idx Starting index within @p other to copy.
-     * @param custom_size Number of PolyUnit entries to copy.
      */
-    explicit Polynomial(const Polynomial &other, Size others_idx,
-                        Size custom_size = 1);
+    explicit PolynomialT(const PolynomialT<U> &other, Size others_idx,
+                         Size custom_size = 1);
     /**
      * @brief Produces a deep copy optionally limited to a prefix of units.
-     * @param num_polyunit Optional number of units to copy.
      */
-    Polynomial deepCopy(std::optional<Size> num_polyunit = std::nullopt) const;
+    PolynomialT<U>
+    deepCopy(std::optional<Size> num_polyunit = std::nullopt) const;
     /**
      * @brief Marks every unit as NTT or standard domain.
-     * @param ntt_state Desired transform state.
      */
     void setNTT(bool ntt_state) noexcept;
     /**
      * @brief Updates current level metadata.
-     * @param preset Preset metadata.
-     * @param level Target modulus index.
      */
     void setLevel(Preset preset, Size level);
     /**
@@ -274,79 +273,78 @@ public:
      */
     Size level() const noexcept;
     /**
-     * @brief Adjusts the number of active PolyUnit entries.
-     * @param preset Preset metadata.
-     * @param size New number of PolyUnit entries.
+     * @brief Adjusts the number of active PolyUnitT entries.
      */
     void setSize(Preset preset, Size size);
     /**
-     * @brief Current number of PolyUnit entries.
+     * @brief Current number of PolyUnitT entries.
      */
     Size size() const noexcept;
     /**
-     * @brief Mutable PolyUnit accessor.
-     * @param index PolyUnit index.
+     * @brief Mutable PolyUnitT accessor.
      */
-    PolyUnit &operator[](size_t index) noexcept { return polyunits_[index]; }
-    /**
-     * @brief Read-only PolyUnit accessor.
-     * @param index PolyUnit index.
-     */
-    const PolyUnit &operator[](size_t index) const noexcept {
+    PolyUnitT<U> &operator[](size_t index) noexcept {
         return polyunits_[index];
     }
     /**
-     * @brief Mutable pointer to the first PolyUnit.
+     * @brief Read-only PolyUnitT accessor.
      */
-    PolyUnit *data() noexcept { return polyunits_.data(); }
+    const PolyUnitT<U> &operator[](size_t index) const noexcept {
+        return polyunits_[index];
+    }
     /**
-     * @brief Const pointer to the first PolyUnit.
+     * @brief Mutable pointer to the first PolyUnitT.
      */
-    const PolyUnit *data() const noexcept { return polyunits_.data(); }
+    PolyUnitT<U> *data() noexcept { return polyunits_.data(); }
+    /**
+     * @brief Const pointer to the first PolyUnitT.
+     */
+    const PolyUnitT<U> *data() const noexcept { return polyunits_.data(); }
 
 private:
-    std::vector<PolyUnit> polyunits_;
+    std::vector<PolyUnitT<U>> polyunits_;
 
     /**
-     * @brief Consecutive data pointer to allocated and deallocated by this
-     * Polynomial. If nullptr, the data is managed externally (or by polyunits_
+     * @brief Consecutive data pointer allocated and deallocated by this
+     * PolynomialT. If nullptr, data is managed externally (or by polyunits_
      * themselves).
      */
-    std::shared_ptr<u64[]> dealloc_ptr_;
+    std::shared_ptr<U[]> dealloc_ptr_;
 };
+
+// =========================================================================
+// CiphertextT<U>
+// =========================================================================
 
 /**
  * @brief Container for encrypted polynomials across modulus levels.
+ *
+ * @tparam U Coefficient word type (u32 or u64, default u64).
  */
-class Ciphertext {
+template <typename U = u64> class CiphertextT {
 public:
-    Ciphertext() = delete;
+    CiphertextT() = delete;
     /**
      * @brief Allocates ciphertext metadata for a preset with default level.
      */
-    explicit Ciphertext(const Preset preset);
+    explicit CiphertextT(const Preset preset);
     /**
      * @brief Allocates ciphertext with explicit level and number of
      * polynomials.
-     * @param preset Preset that describes modulus chain metadata.
-     * @param level Target modulus index.
-     * @param num_poly Optional number of component polynomials.
      */
-    explicit Ciphertext(const Preset preset, const Size level,
-                        std::optional<Size> num_poly = std::nullopt);
+    explicit CiphertextT(const Preset preset, const Size level,
+                         std::optional<Size> num_poly = std::nullopt);
     /**
      * @brief Copies a subset of another ciphertext.
-     * @param other Source ciphertext.
-     * @param others_idx Index within @p other to copy from.
      */
-    explicit Ciphertext(const Ciphertext &other, Size others_idx);
+    explicit CiphertextT(const CiphertextT<U> &other, Size others_idx);
 
     /**
-     * @brief Produces a deep copy optionally restricted to some PolyUnit
+     * @brief Produces a deep copy optionally restricted to some PolyUnitT
      * entries.
-     * @param num_polyunit Optional number of PolyUnit entries per polynomial.
      */
-    Ciphertext deepCopy(std::optional<Size> num_polyunit = std::nullopt) const;
+    CiphertextT<U>
+    deepCopy(std::optional<Size> num_polyunit = std::nullopt) const;
 
     /**
      * @brief Returns associated preset metadata.
@@ -354,7 +352,6 @@ public:
     Preset preset() const noexcept;
     /**
      * @brief Changes encoding metadata between slot and coefficient domains.
-     * @param encoding Desired encoding type.
      */
     void setEncoding(EncodingType encoding);
     /**
@@ -371,12 +368,10 @@ public:
     bool isCoeff() const noexcept;
     /**
      * @brief Sets NTT state for every polynomial.
-     * @param ntt_state True when data is stored in NTT domain.
      */
     void setNTT(bool ntt_state);
     /**
      * @brief Updates level metadata.
-     * @param level Target level index.
      */
     void setLevel(Size level);
     /**
@@ -385,7 +380,6 @@ public:
     Size level() const noexcept;
     /**
      * @brief Resizes number of polynomials.
-     * @param size Desired polynomial count.
      */
     void setNumPolyunit(Size size);
     /**
@@ -394,311 +388,165 @@ public:
     Size numPoly() const noexcept;
     /**
      * @brief Mutable polynomial accessor.
-     * @param index Polynomial index.
      */
-    Polynomial &operator[](size_t index) noexcept { return polys_[index]; }
+    PolynomialT<U> &operator[](size_t index) noexcept { return polys_[index]; }
     /**
      * @brief Const polynomial accessor.
-     * @param index Polynomial index.
      */
-    const Polynomial &operator[](size_t index) const noexcept {
+    const PolynomialT<U> &operator[](size_t index) const noexcept {
         return polys_[index];
     }
     /**
      * @brief Mutable pointer to polynomial storage.
      */
-    Polynomial *data() noexcept { return polys_.data(); }
+    PolynomialT<U> *data() noexcept { return polys_.data(); }
     /**
      * @brief Const pointer to polynomial storage.
      */
-    const Polynomial *data() const noexcept { return polys_.data(); }
+    const PolynomialT<U> *data() const noexcept { return polys_.data(); }
 
 private:
     Preset preset_;
     EncodingType encoding_;
-    std::vector<Polynomial> polys_;
+    std::vector<PolynomialT<U>> polys_;
 };
+
+// =========================================================================
+// SecretKeyT<U>
+// =========================================================================
 
 /**
  * @brief Holds secret key coefficients and polynomial decompositions.
+ *
+ * @tparam U Coefficient word type (u32 or u64, default u64).
  */
-class SecretKey {
+template <typename U = u64> class SecretKeyT {
 public:
-    /**
-     * @brief Default constructor is deleted to prevent accidental creation of
-     * sensitive key material.
-     */
-    SecretKey() = delete;
-    /**
-     * @brief Copy constructor is deleted to prevent accidental copying of
-     * sensitive key material.
-     */
-    SecretKey(const SecretKey &other) = delete;
-    /**
-     * @brief Copy assignment operator is deleted to prevent accidental copying
-     * of sensitive key material.
-     */
-    SecretKey &operator=(const SecretKey &other) = delete;
-    /**
-     * @brief Deterministic constructor from preset and PRNG seed.
-     * @param preset Preset that describes modulus chain metadata.
-     * @param seed Seed used to regenerate coefficients on demand.
-     */
-    explicit SecretKey(Preset preset, const RNGSeed seed);
-    /**
-     * @brief Randomized constructor optionally using coefficient embedding.
-     * @param preset Preset that describes modulus chain metadata.
-     * @param embedding True to allocate polynomial components.
-     */
-    explicit SecretKey(Preset preset, bool embedding = true);
+    SecretKeyT() = delete;
+    SecretKeyT(const SecretKeyT<U> &other) = delete;
+    SecretKeyT<U> &operator=(const SecretKeyT<U> &other) = delete;
 
-    SecretKey(SecretKey &&) noexcept;
-    SecretKey &operator=(SecretKey &&) noexcept;
+    explicit SecretKeyT(Preset preset, const RNGSeed seed);
+    explicit SecretKeyT(Preset preset, bool embedding = true);
 
-    /**
-     * @brief Destructor that securely zeroes all sensitive key material.
-     */
-    ~SecretKey() noexcept;
-    /**
-     * @brief Preset used to generate this key.
-     */
+    SecretKeyT(SecretKeyT<U> &&) noexcept;
+    SecretKeyT<U> &operator=(SecretKeyT<U> &&) noexcept;
+
+    ~SecretKeyT() noexcept;
+
     Preset preset() const noexcept;
-    /**
-     * @brief Checks whether a PRNG seed is stored.
-     */
     bool hasSeed() const noexcept;
-    /**
-     * @brief Retrieves the stored seed.
-     */
     RNGSeed getSeed() const noexcept;
-    /**
-     * @brief Sets the deterministic seed value.
-     * @param seed New seed material.
-     */
     void setSeed(const RNGSeed &seed) noexcept;
-    /**
-     * @brief Removes the stored seed to prevent future regenerations.
-     */
     void flushSeed() noexcept;
+
     /**
      * @brief Securely zeroes all sensitive key material in place.
-     *
-     * Zeros @ref coeffs_, the stored @ref seed_, and every PolyUnit
-     * coefficient buffer inside @ref polys_ using the secure-zero backend
-     * selected by @c DEB_EXT_LIB_FOR_SECURE_ZERO at build time:
-     *  - @c LIBSODIUM  → @c sodium_memzero
-     *  - @c OPENSSL    → @c OPENSSL_cleanse
-     *  - @c NATIVE     → @c explicit_bzero / @c SecureZeroMemory / volatile
-     * byte loop
-     *  - @c NONE       → @c memset (not secure, included for testing purposes
-     * only)
      */
     void zeroize() noexcept;
-    /**
-     * @brief Number of raw coefficients currently allocated.
-     */
+
     Size coeffsSize() const noexcept;
-    /**
-     * @brief Allocates coefficient storage according to the preset.
-     */
     void allocCoeffs();
-    /**
-     * @brief Mutable coefficient accessor.
-     * @param index Coefficient index.
-     */
     i8 &coeff(Size index) noexcept;
-    /**
-     * @brief Const coefficient accessor.
-     * @param index Coefficient index.
-     */
     i8 coeff(Size index) const noexcept;
-    /**
-     * @brief Mutable pointer to coefficient array.
-     */
     i8 *coeffs() noexcept;
-    /**
-     * @brief Const pointer to coefficient array.
-     */
     const i8 *coeffs() const noexcept;
-    /**
-     * @brief Number of stored polynomial components.
-     */
     Size numPoly() const noexcept;
-    /**
-     * @brief Allocates polynomial components.
-     * @param num_polyunit Optional number of PolyUnit entries per polynomial.
-     */
     void allocPolys(std::optional<Size> num_polyunit = std::nullopt);
-    /**
-     * @brief Mutable polynomial accessor.
-     * @param index Polynomial index.
-     */
-    Polynomial &operator[](Size index) { return polys_[index]; }
-    /**
-     * @brief Const polynomial accessor.
-     * @param index Polynomial index.
-     */
-    const Polynomial &operator[](Size index) const { return polys_[index]; }
-    /**
-     * @brief Mutable pointer to polynomial array.
-     */
-    Polynomial *data() noexcept { return polys_.data(); }
-    /**
-     * @brief Const pointer to polynomial array.
-     */
-    const Polynomial *data() const noexcept { return polys_.data(); }
+
+    PolynomialT<U> &operator[](Size index) { return polys_[index]; }
+    const PolynomialT<U> &operator[](Size index) const { return polys_[index]; }
+    PolynomialT<U> *data() noexcept { return polys_.data(); }
+    const PolynomialT<U> *data() const noexcept { return polys_.data(); }
 
 private:
     Preset preset_;
     std::optional<RNGSeed> seed_;
     std::vector<i8> coeffs_;
-    std::vector<Polynomial> polys_;
+    std::vector<PolynomialT<U>> polys_;
 };
+
+// =========================================================================
+// SwitchKeyT<U>
+// =========================================================================
 
 /**
  * @brief Key used for switching ciphertexts between secret keys.
+ *
+ * @tparam U Coefficient word type (u32 or u64, default u64).
  */
-class SwitchKey {
+template <typename U = u64> class SwitchKeyT {
 public:
-    SwitchKey() = delete;
-    /**
-     * @brief Constructs a switching key for a preset and key kind.
-     * @param preset Preset that describes modulus chain metadata.
-     * @param type SwitchKeyKind (SWK_MULT, SWK_ROT, etc).
-     * @param rot_idx Optional rotation index for rotation keys.
-     */
-    explicit SwitchKey(Preset preset, const SwitchKeyKind type,
-                       const std::optional<Size> rot_idx = std::nullopt);
-    /**
-     * @brief Returns the preset metadata for this key.
-     */
+    SwitchKeyT() = delete;
+    explicit SwitchKeyT(Preset preset, const SwitchKeyKind type,
+                        const std::optional<Size> rot_idx = std::nullopt);
+
     Preset preset() const noexcept;
-    /**
-     * @brief Sets the key type (SWK_MULT, SWK_ROT, etc).
-     * @param type SwitchKeyKind value.
-     */
     void setType(const SwitchKeyKind type) noexcept;
-    /**
-     * @brief Returns the key type.
-     */
     SwitchKeyKind type() const noexcept;
-    /**
-     * @brief Sets the rotation index (for rotation keys).
-     * @param rot_idx Rotation index value.
-     */
     void setRotIdx(Size rot_idx) noexcept;
-    /**
-     * @brief Returns the rotation index (for rotation keys).
-     */
     Size rotIdx() const noexcept;
-    /**
-     * @brief Returns the decomposition number (dnum).
-     */
     Size dnum() const noexcept;
-    /**
-     * @brief Adds a polynomial to the Ax-part component.
-     * @param num_polyunit Number of PolyUnit entries.
-     * @param size Optional size of PolyUnit array.
-     * @param ntt_state True if NTT domain.
-     */
+
     void addAx(const Size num_polyunit, std::optional<Size> size = std::nullopt,
                const bool ntt_state = false);
-    /**
-     * @brief Adds a polynomial to the Ax-part component.
-     * @param poly Polynomial to add.
-     */
-    void addAx(const Polynomial &poly);
-    /**
-     * @brief Adds a polynomial to the Bx-part component.
-     * @param num_polyunit Number of PolyUnit entries.
-     * @param size Optional size of PolyUnit array.
-     * @param ntt_state True if NTT domain.
-     */
+    void addAx(const PolynomialT<U> &poly);
     void addBx(const Size num_polyunit, std::optional<Size> size = std::nullopt,
                const bool ntt_state = false);
-    /**
-     * @brief Adds a polynomial to the Bx-part component.
-     * @param poly Polynomial to add.
-     */
-    void addBx(const Polynomial &poly);
-    /**
-     * @brief Sets NTT state for all Ax-part polynomials.
-     * @param ntt_state True if NTT domain.
-     */
+    void addBx(const PolynomialT<U> &poly);
     void setAxNTT(bool ntt_state) noexcept;
-    /**
-     * @brief Sets NTT state for all Bx-part polynomials.
-     * @param ntt_state True if NTT domain.
-     */
     void setBxNTT(bool ntt_state) noexcept;
-    /**
-     * @brief Returns the number of Ax-part polynomials.
-     */
     Size axSize() const noexcept;
-    /**
-     * @brief Returns the number of Bx-part polynomials.
-     */
     Size bxSize() const noexcept;
-    /**
-     * @brief Mutable reference to Ax-part polynomial vector.
-     */
-    std::vector<Polynomial> &getAx() noexcept;
-    /**
-     * @brief Const reference to Ax-part polynomial vector.
-     */
-    const std::vector<Polynomial> &getAx() const noexcept;
-    /**
-     * @brief Mutable reference to Bx-part polynomial vector.
-     */
-    std::vector<Polynomial> &getBx() noexcept;
-    /**
-     * @brief Const reference to Bx-part polynomial vector.
-     */
-    const std::vector<Polynomial> &getBx() const noexcept;
-    /**
-     * @brief Mutable Ax-part polynomial accessor.
-     * @param index Polynomial index.
-     */
-    Polynomial &ax(Size index = 0) noexcept;
-    /**
-     * @brief Const Ax-part polynomial accessor.
-     * @param index Polynomial index.
-     */
-    const Polynomial &ax(Size index = 0) const noexcept;
-    /**
-     * @brief Mutable Bx-part polynomial accessor.
-     * @param index Polynomial index.
-     */
-    Polynomial &bx(Size index = 0) noexcept;
-    /**
-     * @brief Const Bx-part polynomial accessor.
-     * @param index Polynomial index.
-     */
-    const Polynomial &bx(Size index = 0) const noexcept;
+    std::vector<PolynomialT<U>> &getAx() noexcept;
+    const std::vector<PolynomialT<U>> &getAx() const noexcept;
+    std::vector<PolynomialT<U>> &getBx() noexcept;
+    const std::vector<PolynomialT<U>> &getBx() const noexcept;
+    PolynomialT<U> &ax(Size index = 0) noexcept;
+    const PolynomialT<U> &ax(Size index = 0) const noexcept;
+    PolynomialT<U> &bx(Size index = 0) noexcept;
+    const PolynomialT<U> &bx(Size index = 0) const noexcept;
 
 private:
     Preset preset_;
     SwitchKeyKind type_;
     std::optional<Size> rot_idx_;
     Size dnum_;
-    std::vector<Polynomial> ax_;
-    std::vector<Polynomial> bx_;
+    std::vector<PolynomialT<U>> ax_;
+    std::vector<PolynomialT<U>> bx_;
 };
 
-// ---------------------------------------------------------------------
+// =========================================================================
+//  Explicit instantiation declarations and aliases
+// =========================================================================
+
+// Explicit instantiation declarations
+#define DEB_DATASTRUCTURES                                                     \
+    X(PolyUnit) X(Polynomial) X(Ciphertext) X(SecretKey) X(SwitchKey)
+
+#ifdef DEB_U64
+#define X(TYPE)                                                                \
+    using TYPE = TYPE##T<u64>;                                                 \
+    extern template class TYPE##T<u64>;
+DEB_DATASTRUCTURES
+#undef X
+#endif
+
+#ifdef DEB_U32
+#define X(TYPE)                                                                \
+    using TYPE##32 = TYPE##T<u32>;                                             \
+    extern template class TYPE##T<u32>;
+DEB_DATASTRUCTURES
+#undef X
+#endif
+
+// =========================================================================
 // Utility functions to get data pointers
-// ---------------------------------------------------------------------
-/**
- * @brief Returns a mutable pointer to the coefficient data for a given
- * ciphertext polynomial.
- * @param cipher Ciphertext object.
- * @param polyunit_idx Index of the PolyUnit within the polynomial.
- * @param poly_idx Index of the polynomial within the ciphertext (default 0).
- * @return Pointer to coefficient data.
- * @throws std::out_of_range if indices are invalid.
- */
-inline u64 *getData(const Ciphertext &cipher, const Size polyunit_idx,
-                    const Size poly_idx) {
+// =========================================================================
+
+template <typename U = u64>
+inline U *getData(const CiphertextT<U> &cipher, const Size polyunit_idx,
+                  const Size poly_idx) {
     if (poly_idx >= cipher.numPoly() ||
         polyunit_idx >= cipher[poly_idx].size()) {
         throw std::out_of_range("Index out of range in getData");
@@ -706,13 +554,16 @@ inline u64 *getData(const Ciphertext &cipher, const Size polyunit_idx,
     return cipher[poly_idx][polyunit_idx].data();
 }
 
-inline u64 *getData(const Polynomial &poly, const Size polyunit_idx) {
+template <typename U = u64>
+inline U *getData(const PolynomialT<U> &poly, const Size polyunit_idx) {
     if (polyunit_idx >= poly.size()) {
         throw std::out_of_range("Index out of range in getData");
     }
     return poly[polyunit_idx].data();
 }
 
-inline u64 getData(const u64 *data, const Size idx) { return data[idx]; }
+template <typename U = u64> inline U getData(const U *data, const Size idx) {
+    return data[idx];
+}
 
 } // namespace deb

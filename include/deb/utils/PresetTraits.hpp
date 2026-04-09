@@ -20,17 +20,18 @@
 
 namespace deb {
 
-template <Preset> struct PresetTraits;
+template <Preset, typename U = u64> struct PresetTraits;
 #define X(preset)                                                              \
-    template <> struct PresetTraits<PRESET_##preset> : public preset {         \
+    template <typename U>                                                      \
+    struct PresetTraits<PRESET_##preset, U> : public preset {                  \
         PresetTraits() = delete;                                               \
         PresetTraits([[maybe_unused]] Preset p) {}                             \
-        std::vector<utils::ModArith<preset::degree>> modarith;                 \
+        std::vector<utils::ModArith<preset::degree, U>> modarith;              \
     };
 PRESET_LIST
 #undef X
 
-template <> struct PresetTraits<PRESET_EMPTY> {
+template <typename U> struct PresetTraits<PRESET_EMPTY, U> {
 #define CV(type, var_name) type var_name;
     CONST_LIST
 #undef CV
@@ -40,7 +41,7 @@ template <> struct PresetTraits<PRESET_EMPTY> {
         CONST_LIST
 #undef CV
     }
-    std::vector<utils::ModArith<1>> modarith;
+    std::vector<utils::ModArith<1, U>> modarith;
 };
 
 } // namespace deb

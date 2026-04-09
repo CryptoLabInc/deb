@@ -15,31 +15,37 @@
  */
 
 #include "SecretKeyGenerator.hpp"
-#include "Serialize.hpp"
 
 namespace deb {
 
-SecretKeyGenerator::SecretKeyGenerator(Preset preset) : preset_(preset) {}
+template <typename U>
+SecretKeyGeneratorT<U>::SecretKeyGeneratorT(Preset preset) : preset_(preset) {}
 
-SecretKey SecretKeyGenerator::genSecretKey(std::optional<const RNGSeed> seeds) {
+template <typename U>
+SecretKeyT<U>
+SecretKeyGeneratorT<U>::genSecretKey(std::optional<const RNGSeed> seeds) {
     return GenSecretKey(preset_, seeds);
 }
 
-void SecretKeyGenerator::genSecretKeyInplace(
-    SecretKey &sk, std::optional<const RNGSeed> seeds) {
+template <typename U>
+void SecretKeyGeneratorT<U>::genSecretKeyInplace(
+    SecretKeyT<U> &sk, std::optional<const RNGSeed> seeds) {
     GenSecretKeyInplace(sk, seeds);
 }
 
-SecretKey SecretKeyGenerator::genSecretKeyFromCoeff(const i8 *coeffs) {
+template <typename U>
+SecretKeyT<U> SecretKeyGeneratorT<U>::genSecretKeyFromCoeff(const i8 *coeffs) {
     return GenSecretKeyFromCoeff(preset_, coeffs);
 }
 
-void SecretKeyGenerator::genSecretKeyFromCoeffInplace(SecretKey &sk,
-                                                      const i8 *coeffs) {
+template <typename U>
+void SecretKeyGeneratorT<U>::genSecretKeyFromCoeffInplace(SecretKeyT<U> &sk,
+                                                          const i8 *coeffs) {
     GenSecretKeyFromCoeffInplace(sk, coeffs);
 }
 
-i8 *SecretKeyGenerator::GenCoeff(const Preset preset, const RNGSeed seed) {
+template <typename U>
+i8 *SecretKeyGeneratorT<U>::GenCoeff(const Preset preset, const RNGSeed seed) {
     const auto dim = get_degree(preset);
     const auto num_secret = get_num_secret(preset);
     const auto section_size = get_rank(preset) * dim;
@@ -49,8 +55,10 @@ i8 *SecretKeyGenerator::GenCoeff(const Preset preset, const RNGSeed seed) {
     return coeffs;
 }
 
-RNGSeed SecretKeyGenerator::GenCoeffInplace(const Preset preset, i8 *coeffs,
-                                            std::optional<const RNGSeed> seed) {
+template <typename U>
+RNGSeed
+SecretKeyGeneratorT<U>::GenCoeffInplace(const Preset preset, i8 *coeffs,
+                                        std::optional<const RNGSeed> seed) {
     const auto dim = get_degree(preset);
     const auto num_secret = get_num_secret(preset);
     const auto section_size = get_rank(preset) * dim;
@@ -66,25 +74,28 @@ RNGSeed SecretKeyGenerator::GenCoeffInplace(const Preset preset, i8 *coeffs,
     return seed.value();
 }
 
-SecretKey SecretKeyGenerator::ComputeEmbedding(const Preset preset,
-                                               const i8 *coeffs,
-                                               std::optional<Size> level) {
+template <typename U>
+SecretKeyT<U>
+SecretKeyGeneratorT<U>::ComputeEmbedding(const Preset preset, const i8 *coeffs,
+                                         std::optional<Size> level) {
     level = level.value_or(get_num_p(preset) - 1);
-    SecretKey sk(preset);
+    SecretKeyT<U> sk(preset);
     sk.allocPolys(level.value() + 1);
     ComputeEmbeddingInplace(sk, coeffs);
     return sk;
 }
 
-void SecretKeyGenerator::ComputeEmbeddingInplace(SecretKey &sk,
-                                                 const i8 *coeffs) {
+template <typename U>
+void SecretKeyGeneratorT<U>::ComputeEmbeddingInplace(SecretKeyT<U> &sk,
+                                                     const i8 *coeffs) {
     const auto dim = get_degree(sk.preset());
     const auto num_secret = get_num_secret(sk.preset());
     const auto rank = get_rank(sk.preset());
 
-    deb_assert(coeffs != nullptr,
-               "[SecretKeyGenerator::ComputeEmbeddingInplace] Coefficients are "
-               "not allocated.");
+    deb_assert(
+        coeffs != nullptr,
+        "[SecretKeyGeneratorT::ComputeEmbeddingInplace] Coefficients are "
+        "not allocated.");
     if (sk.coeffs() != coeffs) {
         sk.allocCoeffs();
         memcpy(sk.coeffs(), coeffs, rank * dim * num_secret * sizeof(i8));
@@ -95,49 +106,55 @@ void SecretKeyGenerator::ComputeEmbeddingInplace(SecretKey &sk,
     }
     for (Size i = 0; i < rank * num_secret; ++i) {
         for (Size j = 0; j < sk[i].size(); ++j) {
-            u64 *ptr = sk[i][j].data();
+            U *ptr = sk[i][j].data();
+            const u64 prime_j = get_primes(sk.preset())[j];
             for (Size k = 0; k < dim; ++k) {
-                ptr[k] = (sk.coeffs()[i * dim + k] >= 0)
-                             ? static_cast<u64>(sk.coeffs()[i * dim + k])
-                             : get_primes(sk.preset())[j] -
-                                   static_cast<u64>(-sk.coeffs()[i * dim + k]);
+                const i8 c = sk.coeffs()[i * dim + k];
+                ptr[k] = (c >= 0)
+                             ? static_cast<U>(c)
+                             : static_cast<U>(prime_j - static_cast<u64>(-c));
             }
             // TODO: reuse NTT object
-            utils::NTT ntt(dim, get_primes(sk.preset())[j]);
+            utils::NTT<U> ntt(dim, prime_j);
             ntt.computeForward(sk[i][j].data());
             sk[i][j].setNTT(true);
         }
     }
 }
 
-SecretKey SecretKeyGenerator::GenSecretKey(Preset preset,
-                                           std::optional<const RNGSeed> seeds) {
-    SecretKey sk(preset);
+template <typename U>
+SecretKeyT<U>
+SecretKeyGeneratorT<U>::GenSecretKey(Preset preset,
+                                     std::optional<const RNGSeed> seeds) {
+    SecretKeyT<U> sk(preset);
     sk.setSeed(GenCoeffInplace(preset, sk.coeffs(), seeds));
     GenSecretKeyFromCoeffInplace(sk, sk.coeffs());
     return sk;
 }
 
-void SecretKeyGenerator::GenSecretKeyInplace(
-    SecretKey &sk, std::optional<const RNGSeed> seeds) {
+template <typename U>
+void SecretKeyGeneratorT<U>::GenSecretKeyInplace(
+    SecretKeyT<U> &sk, std::optional<const RNGSeed> seeds) {
     sk.setSeed(GenCoeffInplace(sk.preset(), sk.coeffs(), seeds));
     GenSecretKeyFromCoeffInplace(sk, sk.coeffs());
 }
 
-SecretKey SecretKeyGenerator::GenSecretKeyFromCoeff(const Preset preset,
-                                                    const i8 *coeffs) {
-
-    SecretKey sk(preset);
+template <typename U>
+SecretKeyT<U> SecretKeyGeneratorT<U>::GenSecretKeyFromCoeff(const Preset preset,
+                                                            const i8 *coeffs) {
+    SecretKeyT<U> sk(preset);
     GenSecretKeyFromCoeffInplace(sk, coeffs);
     return sk;
 }
 
-void SecretKeyGenerator::GenSecretKeyFromCoeffInplace(SecretKey &sk,
-                                                      const i8 *coeffs) {
+template <typename U>
+void SecretKeyGeneratorT<U>::GenSecretKeyFromCoeffInplace(SecretKeyT<U> &sk,
+                                                          const i8 *coeffs) {
     ComputeEmbeddingInplace(sk, coeffs);
 }
 
-void completeSecretKey(SecretKey &sk, std::optional<Size> level) {
+template <typename U>
+void completeSecretKey(SecretKeyT<U> &sk, std::optional<Size> level) {
     const auto rank = get_rank(sk.preset());
     const auto num_secret = get_num_secret(sk.preset());
     const auto degree = get_degree(sk.preset());
@@ -147,14 +164,26 @@ void completeSecretKey(SecretKey &sk, std::optional<Size> level) {
             throw std::runtime_error(
                 "[completeSecretKey] Secret key has no seed.");
         }
-        SecretKeyGenerator::GenCoeffInplace(sk.preset(), sk.coeffs(),
-                                            sk.getSeed());
+        SecretKeyGeneratorT<U>::GenCoeffInplace(sk.preset(), sk.coeffs(),
+                                                sk.getSeed());
     }
     level = level.value_or(get_num_p(sk.preset()) - 1);
     if (sk.numPoly() != num_secret * rank ||
         sk[0].size() != level.value() + 1) {
         sk.allocPolys(level.value() + 1);
     }
-    SecretKeyGenerator::ComputeEmbeddingInplace(sk, sk.coeffs());
+    SecretKeyGeneratorT<U>::ComputeEmbeddingInplace(sk, sk.coeffs());
 }
+
+// Explicit instantiations
+#ifdef DEB_U64
+template class SecretKeyGeneratorT<u64>;
+template void completeSecretKey<u64>(SecretKeyT<u64> &, std::optional<Size>);
+#endif
+
+#ifdef DEB_U32
+template class SecretKeyGeneratorT<u32>;
+template void completeSecretKey<u32>(SecretKeyT<u32> &, std::optional<Size>);
+#endif
+
 } // namespace deb

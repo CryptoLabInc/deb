@@ -68,41 +68,71 @@ u64 findPrimitiveRoot(u64 prime) {
 
 } // namespace utils
 
+// ---------------------------------------------------------------------------
+// Butterfly operations -- templated on U
+// ---------------------------------------------------------------------------
 namespace {
 
-static inline void butterfly(u64 &x, u64 &y, const u64 &w, const u64 &ws,
-                             const u64 &p1, const u64 &p2) {
-    const u64 ty = mulModLazy(y, w, ws, p1);
+template <typename U>
+static inline void butterfly(U &x, U &y, U w, U ws, U p1, U p2) {
+    const U ty = mulModLazy(y, w, ws, p1);
     x = subIfGE(x, p2);
-    y = x + p2 - ty;
-    x += ty;
+    if constexpr (std::is_same_v<U, u32>) {
+        u64 x64 = static_cast<u64>(x);
+        u64 ty64 = static_cast<u64>(ty);
+        u64 p2_64 = static_cast<u64>(p2);
+        u64 sum = x64 + ty64;
+        u64 diff = x64 + p2_64 - ty64;
+        x = static_cast<U>(subIfGE<u64>(sum, p2_64));
+        y = static_cast<U>(subIfGE<u64>(diff, p2_64));
+    } else {
+        y = static_cast<U>(x + p2 - ty);
+        x = static_cast<U>(x + ty);
+    }
 }
 
-static inline void butterflyInv(u64 &x, u64 &y, const u64 &w, const u64 &ws,
-                                const u64 &p1, const u64 &p2) {
-    const u64 tx = subIfGE(x + y, p2);
-    y = mulModLazy(x + p2 - y, w, ws, p1);
-    x = tx;
+template <typename U>
+static inline void butterflyInv(U &x, U &y, U w, U ws, U p1, U p2) {
+    if constexpr (std::is_same_v<U, u32>) {
+        u64 x64 = static_cast<u64>(subIfGE(x, p2));
+        u64 y64 = static_cast<u64>(subIfGE(y, p2));
+        u64 p2_64 = static_cast<u64>(p2);
+        U tx = static_cast<U>(subIfGE<u64>(x64 + y64, p2_64));
+        y = mulModLazy(static_cast<U>(subIfGE<u64>(x64 + p2_64 - y64, p2_64)),
+                       w, ws, p1);
+        x = tx;
+    } else {
+        const U tx = subIfGE(static_cast<U>(x + y), p2);
+        y = mulModLazy(static_cast<U>(x + p2 - y), w, ws, p1);
+        x = tx;
+    }
 }
 
 } // anonymous namespace
 
-NTT::NTT(u64 degree, u64 prime)
-    : prime_(prime), two_prime_(prime_ << 1), degree_(degree),
-      psi_rev_(degree_), psi_inv_rev_(degree_), psi_rev_shoup_(degree_),
-      psi_inv_rev_shoup_(degree_) {
+// ---------------------------------------------------------------------------
+// NTT<U> constructor
+// ---------------------------------------------------------------------------
+
+template <typename U>
+NTT<U>::NTT(u64 degree, u64 prime)
+    : prime_(static_cast<U>(prime)), two_prime_(static_cast<U>(prime * 2)),
+      degree_(degree), psi_rev_(degree_), psi_inv_rev_(degree_),
+      psi_rev_shoup_(degree_), psi_inv_rev_shoup_(degree_) {
 
     const u64 num_roots = degree_;
 
     if (prime % (2 * num_roots) != 1)
-        throw std::runtime_error("Not an NTT-friendly prime given.");
+        throw std::runtime_error("[NTT] Not an NTT-friendly prime given.");
 
     if (!isPowerOfTwo(degree_))
         throw std::runtime_error("[NTT] degree must be a power of two.");
 
+    // All construction arithmetic uses u64 for precision; narrowed to U when
+    // stored in the twiddle-factor vectors.
     auto mult_with_barr = [](u64 x, u64 y, u64 y_barr, u64 prime_mod) {
-        u64 res = mulModLazy(x, y, y_barr, prime_mod);
-        return subIfGE(res, prime_mod);
+        u64 res = mulModLazy<u64>(x, y, y_barr, prime_mod);
+        return subIfGE<u64>(res, prime_mod);
     };
 
     u64 psi = utils::findPrimitiveRoot(prime);
@@ -121,8 +151,8 @@ NTT::NTT(u64 degree, u64 prime)
     psi = min_root;
 
     u64 psi_inv = invModSimple(psi, prime);
-    psi_rev_[0] = 1;
-    psi_inv_rev_[0] = 1;
+    psi_rev_[0] = U(1);
+    psi_inv_rev_[0] = U(1);
 
     u64 idx = 0;
     u64 previdx = 0;
@@ -131,13 +161,15 @@ NTT::NTT(u64 degree, u64 prime)
     u64 psi_inv_barr = divide128By64Lo(psi_inv, 0, prime);
     for (u64 i = 1; i < degree_; i++) {
         idx = bitReverse(static_cast<Size>(i), max_digits);
-        psi_rev_[idx] = mult_with_barr(psi_rev_[previdx], psi, psi_barr, prime);
-        psi_inv_rev_[idx] =
-            mult_with_barr(psi_inv_rev_[previdx], psi_inv, psi_inv_barr, prime);
+        psi_rev_[idx] = static_cast<U>(mult_with_barr(
+            static_cast<u64>(psi_rev_[previdx]), psi, psi_barr, prime));
+        psi_inv_rev_[idx] = static_cast<U>(
+            mult_with_barr(static_cast<u64>(psi_inv_rev_[previdx]), psi_inv,
+                           psi_inv_barr, prime));
         previdx = idx;
     }
 
-    std::vector<u64> tmp(degree_);
+    std::vector<U> tmp(degree_);
     tmp[0] = psi_inv_rev_[0];
     Size idx2 = 1;
     for (u64 m = (degree_ >> 1); m > 0; m >>= 1) {
@@ -148,31 +180,34 @@ NTT::NTT(u64 degree, u64 prime)
     }
     psi_inv_rev_ = std::move(tmp);
 
+    // Compute Shoup precomputed values using computeShoup<U>
     for (u64 i = 0; i < degree_; i++) {
-        psi_rev_shoup_[i] = divide128By64Lo(psi_rev_[i], 0, prime);
-        psi_inv_rev_shoup_[i] = divide128By64Lo(psi_inv_rev_[i], 0, prime);
+        psi_rev_shoup_[i] = computeShoup<U>(psi_rev_[i], prime_);
+        psi_inv_rev_shoup_[i] = computeShoup<U>(psi_inv_rev_[i], prime_);
     }
 
-    // variables for last step of backward NTT
-    degree_inv_ = invModSimple(degree_, prime_);
-    degree_inv_barrett_ = divide128By64Lo(degree_inv_, 0, prime_);
-    degree_inv_w_ =
-        mulModSimple(degree_inv_, psi_inv_rev_[degree_ - 1], prime_);
-    degree_inv_w_barrett_ = divide128By64Lo(degree_inv_w_, 0, prime_);
-
-    // Only up to one of them will be hit. This mandates the NTT object
-    // can only be run on cores that has the same detected feature during
-    // construction time.
+    // Variables for last step of backward NTT
+    degree_inv_ = static_cast<U>(invModSimple(degree_, prime));
+    degree_inv_barrett_ = computeShoup<U>(degree_inv_, prime_);
+    degree_inv_w_ = static_cast<U>(
+        mulModSimple(static_cast<u64>(degree_inv_),
+                     static_cast<u64>(psi_inv_rev_[degree_ - 1]), prime));
+    degree_inv_w_barrett_ = computeShoup<U>(degree_inv_w_, prime_);
 }
 
-void NTT::computeForwardNativeSingleStep(u64 *op, const u64 t) const {
+// ---------------------------------------------------------------------------
+// Forward NTT -- single butterfly pass
+// ---------------------------------------------------------------------------
+
+template <typename U>
+void NTT<U>::computeForwardNativeSingleStep(U *op, const u64 t) const {
     const u64 degree = this->degree_;
-    const u64 prime = this->prime_;
-    const u64 two_prime = this->two_prime_;
+    const U prime = this->prime_;
+    const U two_prime = this->two_prime_;
 
     const u64 m = (degree >> 1) / t;
-    const u64 *w_ptr = psi_rev_.data() + m;
-    const u64 *ws_ptr = psi_rev_shoup_.data() + m;
+    const U *w_ptr = psi_rev_.data() + m;
+    const U *ws_ptr = psi_rev_shoup_.data() + m;
 
     switch (t) {
     case 1:
@@ -236,12 +271,12 @@ void NTT::computeForwardNativeSingleStep(u64 *op, const u64 t) const {
         }
         break;
     default:
-        u64 *x_ptr = op;
-        u64 *y_ptr = op + t;
+        U *x_ptr = op;
+        U *y_ptr = op + t;
 
         for (u64 i = m; i > 0; --i) {
-            const u64 w = *w_ptr++;
-            const u64 ws = *ws_ptr++;
+            const U w = *w_ptr++;
+            const U ws = *ws_ptr++;
 
             DEB_LOOP_UNROLL_8
             for (u64 j = 0; j < (t >> 3); ++j) {
@@ -268,15 +303,14 @@ void NTT::computeForwardNativeSingleStep(u64 *op, const u64 t) const {
     }
 }
 
-void NTT::computeForward(u64 *op) const {
-    // fallback
+template <typename U> void NTT<U>::computeForward(U *op) const {
     const u64 degree = this->degree_;
 
     for (u64 t = (degree >> 1); t > 0; t >>= 1)
         computeForwardNativeSingleStep(op, t);
 
-    const u64 prime = this->prime_;
-    const u64 two_prime = this->two_prime_;
+    const U prime = this->prime_;
+    const U two_prime = this->two_prime_;
 #if DEB_ALINAS_LEN == 0
     PRAGMA_OMP(omp simd)
 #else
@@ -288,15 +322,20 @@ void NTT::computeForward(u64 *op) const {
     }
 }
 
-void NTT::computeBackwardNativeSingleStep(u64 *op, const u64 t) const {
+// ---------------------------------------------------------------------------
+// Inverse NTT -- single butterfly pass
+// ---------------------------------------------------------------------------
+
+template <typename U>
+void NTT<U>::computeBackwardNativeSingleStep(U *op, const u64 t) const {
     const u64 degree = this->degree_;
-    const u64 prime = this->prime_;
-    const u64 two_prime = this->two_prime_;
+    const U prime = this->prime_;
+    const U two_prime = this->two_prime_;
 
     const u64 m = (degree >> 1) / t;
     const u64 root_idx = 1 + degree - (degree / t);
-    const u64 *w_ptr = psi_inv_rev_.data() + root_idx;
-    const u64 *ws_ptr = psi_inv_rev_shoup_.data() + root_idx;
+    const U *w_ptr = psi_inv_rev_.data() + root_idx;
+    const U *ws_ptr = psi_inv_rev_shoup_.data() + root_idx;
 
     switch (t) {
     case 1:
@@ -360,12 +399,12 @@ void NTT::computeBackwardNativeSingleStep(u64 *op, const u64 t) const {
         }
         break;
     default:
-        u64 *x_ptr = op;
-        u64 *y_ptr = op + t;
+        U *x_ptr = op;
+        U *y_ptr = op + t;
 
         for (u64 i = m; i > 0; --i) {
-            const u64 w = *w_ptr++;
-            const u64 ws = *ws_ptr++;
+            const U w = *w_ptr++;
+            const U ws = *ws_ptr++;
 
             DEB_LOOP_UNROLL_8
             for (u64 j = 0; j < (t >> 3); ++j) {
@@ -393,26 +432,36 @@ void NTT::computeBackwardNativeSingleStep(u64 *op, const u64 t) const {
     }
 }
 
-void NTT::computeBackwardNativeLast(u64 *op) const {
+template <typename U> void NTT<U>::computeBackwardNativeLast(U *op) const {
     const u64 degree = this->degree_;
-    const u64 prime = this->prime_;
-    const u64 two_prime = this->two_prime_;
+    const U prime = this->prime_;
+    const U two_prime = this->two_prime_;
 
-    const u64 degree_inv = this->degree_inv_;
-    const u64 degree_inv_br = this->degree_inv_barrett_;
-    const u64 degree_inv_w = this->degree_inv_w_;
-    const u64 degree_inv_w_br = this->degree_inv_w_barrett_;
+    const U degree_inv = this->degree_inv_;
+    const U degree_inv_br = this->degree_inv_barrett_;
+    const U degree_inv_w = this->degree_inv_w_;
+    const U degree_inv_w_br = this->degree_inv_w_barrett_;
 
-    auto butterfly_inv_degree = [&](u64 &x, u64 &y) {
-        u64 tx = x + y;
-        u64 ty = x + two_prime - y;
-        tx = subIfGE(tx, two_prime);
-        x = mulModLazy(tx, degree_inv, degree_inv_br, prime);
-        y = mulModLazy(ty, degree_inv_w, degree_inv_w_br, prime);
+    auto butterfly_inv_degree = [&](U &x, U &y) {
+        if constexpr (std::is_same_v<U, u32>) {
+            u64 x64 = static_cast<u64>(subIfGE(x, two_prime));
+            u64 y64 = static_cast<u64>(subIfGE(y, two_prime));
+            u64 p2_64 = static_cast<u64>(two_prime);
+            U tx = static_cast<U>(subIfGE<u64>(x64 + y64, p2_64));
+            U ty = static_cast<U>(subIfGE<u64>(x64 + p2_64 - y64, p2_64));
+            x = mulModLazy(tx, degree_inv, degree_inv_br, prime);
+            y = mulModLazy(ty, degree_inv_w, degree_inv_w_br, prime);
+        } else {
+            U tx = static_cast<U>(x + y);
+            U ty = static_cast<U>(x + two_prime - y);
+            tx = subIfGE(tx, two_prime);
+            x = mulModLazy(tx, degree_inv, degree_inv_br, prime);
+            y = mulModLazy(ty, degree_inv_w, degree_inv_w_br, prime);
+        }
     };
 
-    u64 *x_ptr = op;
-    u64 *y_ptr = op + (degree >> 1);
+    U *x_ptr = op;
+    U *y_ptr = op + (degree >> 1);
 
     DEB_LOOP_UNROLL_8
     for (u64 i = 0; i < (degree >> 4); ++i) {
@@ -427,7 +476,7 @@ void NTT::computeBackwardNativeLast(u64 *op) const {
     }
 }
 
-void NTT::computeBackward(u64 *op) const {
+template <typename U> void NTT<U>::computeBackward(U *op) const {
 
     const u64 degree = this->degree_;
     const u64 half_degree = degree >> 1;
@@ -437,7 +486,7 @@ void NTT::computeBackward(u64 *op) const {
 
     computeBackwardNativeLast(op);
 
-    const u64 prime = this->prime_;
+    const U prime = this->prime_;
 #if DEB_ALINAS_LEN == 0
     PRAGMA_OMP(omp simd)
 #else
@@ -446,5 +495,13 @@ void NTT::computeBackward(u64 *op) const {
     for (u64 i = 0; i < degree; i++)
         op[i] = subIfGE(op[i], prime);
 }
+
+// Explicit instantiations
+#ifdef DEB_U64
+template class NTT<u64>;
+#endif
+#ifdef DEB_U32
+template class NTT<u32>;
+#endif
 
 } // namespace deb::utils

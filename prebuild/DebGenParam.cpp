@@ -18,14 +18,6 @@
 // Build: g++ -std=c++17 -O2 DebGenParam.cpp -o DebGenParam
 // Usage: ./DebGenParam input.json output.hpp PRESET1 PRESET2 ...
 
-#include <filesystem>
-#include <iostream>
-#include <sstream>
-#include <string>
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
-
 #include "DebPreComputeUtils.hpp"
 
 int main(int argc, char **argv) {
@@ -97,8 +89,6 @@ int main(int argc, char **argv) {
 
     for (const auto &kv : raw_by_name) {
         const std::string &name = kv.first;
-        if (!preset_list.count("ALL") && !preset_list.count(name))
-            continue;
         FinalPreset p = resolve_one(name, raw_by_name, memo, visiting);
         finals.push_back(std::move(p));
         parent_presets.insert(memo[name].PARENT);
@@ -118,7 +108,7 @@ int main(int argc, char **argv) {
               });
 
     try {
-        write_header(out_hpp, finals);
+        write_header(out_hpp, finals, preset_list);
     } catch (const std::exception &e) {
         std::cerr << "Error writing header: " << e.what() << "\n";
         return 1;

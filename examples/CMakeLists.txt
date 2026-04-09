@@ -15,11 +15,9 @@
 # ~~~
 
 add_library(example_utils OBJECT ExampleUtils.cpp)
-target_link_libraries(example_utils PRIVATE ${PROJECT_NAME}_obj
-                                            ${PROJECT_NAME}_DevHeader)
+target_link_libraries(example_utils PRIVATE ${PROJECT_NAME})
 
-set(${PROJECT_NAME}_example example_utils ${PROJECT_NAME}_obj
-                            ${PROJECT_NAME}_DevHeader)
+set(${PROJECT_NAME}_example example_utils ${PROJECT_NAME})
 
 # Example targets
 add_executable(EnDecryption EnDecryption.cpp)
@@ -32,12 +30,14 @@ target_link_libraries(EnDecryption-MultiSecret
 add_executable(SeedOnlySecretKey SeedOnlySecretKey.cpp)
 target_link_libraries(SeedOnlySecretKey PRIVATE ${${PROJECT_NAME}_example})
 
-add_executable(Serialization Serialization.cpp)
-target_link_libraries(Serialization PRIVATE ${${PROJECT_NAME}_example})
-
 add_executable(KeyGeneration KeyGeneration.cpp)
 target_link_libraries(KeyGeneration PRIVATE ${${PROJECT_NAME}_example})
 
 # Custom RNG example
 add_executable(CustomRNG CustomRNG.cpp)
 target_link_libraries(CustomRNG PRIVATE ${${PROJECT_NAME}_example} sodium)
+
+if(DEB_SERIALIZE_API)
+  add_executable(Serialization Serialization.cpp)
+  target_link_libraries(Serialization PRIVATE ${${PROJECT_NAME}_example})
+endif()

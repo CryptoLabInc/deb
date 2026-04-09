@@ -27,7 +27,8 @@
         "DEB_BUILD_TEST": "ON",
         "DEB_BUILD_EXAMPLES": "OFF",
         "DEB_BUILD_BENCHMARK": "OFF",
-        "DEB_BUILD_WITH_OMP": "ON"
+        "DEB_BUILD_WITH_OMP": "ON",
+        "DEB_SUPPORT_U32": "ON"
       }
     },
     {

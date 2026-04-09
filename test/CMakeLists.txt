@@ -33,29 +33,40 @@ cpmaddpackage(
 
 # ---------------------------------------------------------------------------
 
-set(deb_test deb_obj deb_DevHeader gtest_main)
+set(deb_test deb gtest_main)
 
 # Operation Test
 add_executable(Operation-test Operation-test.cpp)
 target_link_libraries(Operation-test PRIVATE ${deb_test})
 add_gtest_target_to_ctest(Operation-test)
 
-# EnDecryption Test
-add_executable(EnDecryption-test EnDecryption-test.cpp)
-target_link_libraries(EnDecryption-test PRIVATE ${deb_test})
-add_gtest_target_to_ctest(EnDecryption-test)
+if(DEB_SUPPORT_U64)
+  # EnDecryption Test
+  add_executable(EnDecryption-test EnDecryption-test.cpp)
+  target_link_libraries(EnDecryption-test PRIVATE ${deb_test})
+  add_gtest_target_to_ctest(EnDecryption-test)
 
-# KeyGen Test
-add_executable(KeyGen-test KeyGen-test.cpp)
-target_link_libraries(KeyGen-test PRIVATE ${deb_test})
-add_gtest_target_to_ctest(KeyGen-test)
+  # KeyGen Test
+  add_executable(KeyGen-test KeyGen-test.cpp)
+  target_link_libraries(KeyGen-test PRIVATE ${deb_test})
+  add_gtest_target_to_ctest(KeyGen-test)
+
+  # Ntt Test
+  add_executable(NTT-test NTT-test.cpp)
+  target_link_libraries(NTT-test PRIVATE ${deb_test})
+  add_gtest_target_to_ctest(NTT-test)
+endif()
+
+# U32 Type Test
+if(DEB_SUPPORT_U32)
+  add_executable(U32-test U32-test.cpp)
+  target_link_libraries(U32-test PRIVATE ${deb_test})
+  add_gtest_target_to_ctest(U32-test)
+endif()
 
 # Serialize Test
-add_executable(Serialize-test Serialize-test.cpp)
-target_link_libraries(Serialize-test PRIVATE ${deb_test})
-add_gtest_target_to_ctest(Serialize-test)
-
-# Ntt Test
-add_executable(NTT-test NTT-test.cpp)
-target_link_libraries(NTT-test PRIVATE ${deb_test})
-add_gtest_target_to_ctest(NTT-test)
+if(DEB_SERIALIZE_API AND DEB_SUPPORT_U64)
+  add_executable(Serialize-test Serialize-test.cpp)
+  target_link_libraries(Serialize-test PRIVATE ${deb_test})
+  add_gtest_target_to_ctest(Serialize-test)
+endif()

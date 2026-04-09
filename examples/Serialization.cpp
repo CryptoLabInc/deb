@@ -15,6 +15,7 @@
 */
 
 #include "ExampleUtils.hpp"
+#include "Serialize.hpp"
 
 #include <filesystem>
 #include <fstream>

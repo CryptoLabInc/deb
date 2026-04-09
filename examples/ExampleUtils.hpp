@@ -22,7 +22,6 @@
 #include "KeyGenerator.hpp"
 #include "SecretKeyGenerator.hpp"
 #include "SeedGenerator.hpp"
-#include "Serialize.hpp"
 
 #include <chrono>
 #include <iostream>

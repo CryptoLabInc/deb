@@ -39,16 +39,25 @@ template <> struct DegreeTrait<1> {
 
 /**
  * @brief Provides modular arithmetic utilities bound to a specific modulus.
+ *
+ * @tparam D Compile-time polynomial degree (1 = dynamic).
+ * @tparam U Coefficient word type (u32 or u64, default u64).
+ *           All coefficient arrays and the stored prime use type U.
+ *           Barrett precomputation values are always stored as u64 because
+ *           they represent floor(2^64 / prime) regardless of U.
  */
-template <Size D = 1> class ModArith : public DegreeTrait<D> {
+template <Size D = 1, typename U = u64> class ModArith : public DegreeTrait<D> {
     using DegreeTrait<D>::degree;
 
 public:
     explicit ModArith() = default;
     /**
      * @brief Initializes precomputed tables for a modulus and vector size.
-     * @param size Default vector size (poly degree).
-     * @param prime Prime modulus.
+     *
+     * The prime is accepted as u64 for compatibility with preset tables; it is
+     * narrowed to U internally.
+     *
+     * @param prime Prime modulus (must fit in U for correctness).
      */
     explicit ModArith(u64 prime);
     explicit ModArith(Size degree, u64 prime);
@@ -56,7 +65,16 @@ public:
     /**
      * @brief Returns the modulus associated with this instance.
      */
-    inline u64 getPrime() const { return prime_; }
+    inline U getPrime() const { return prime_; }
+
+    /**
+     * @brief Returns the precomputed Barrett ratio floor(2^64 / prime).
+     *
+     * Used in Barrett reduction of 64-bit products.
+     */
+    inline u64 get_barrett_ratio_for_u64() const {
+        return barrett_ratio_for_u64_;
+    }
 
     // InputModFactor: input value must be in the range
     //                [0, InputModFactor * prime).
@@ -65,9 +83,9 @@ public:
     template <int InputModFactor = 4, int OutputModFactor = 1>
     /**
      * @brief Reduces an operand in-place based on input/output modular ranges.
-     * @param op Value to reduce.
+     * @param op Value to reduce (type U).
      */
-    inline void reduceModFactor(u64 &op) const {
+    inline void reduceModFactor(U &op) const {
         static_assert((InputModFactor == 1) || (InputModFactor == 2) ||
                           (InputModFactor == 4),
                       "InputModFactor must be 1, 2 or 4");
@@ -82,130 +100,131 @@ public:
             op = subIfGE(op, prime_);
     }
 
-    // Barrett Parameters:
-    //    1. exponent: 64 (implicit)
-    //    2. ratio   : 2^64 / prime (barrettRatiofor64)
-    // Rough algorithm description:
-    //    1. Compute approximate value for the quotient (op * ratio) >> exponent
-    //    2. res = op - approxQuotient * prime is in range [0, 2 * prime)
-    //    3. Whenever OutputModFactor == 1, res additionally gets reduced if
-    //      necessary.
-    template <int OutputModFactor = 1> u64 reduceBarrett(u64 op) const {
+    /**
+     * @brief Barrett reduction of a U-wide value (single word).
+     *
+     * Reduces op ∈ [0, 2^bits) to [0, OutputModFactor·prime) using
+     * precomputed floor(2^64 / prime).
+     */
+    template <int OutputModFactor = 1> U reduceBarrett(U op) const {
         static_assert((OutputModFactor == 1) || (OutputModFactor == 2),
                       "OutputModFactor must be 1 or 2");
-
-        u64 approx_quotient = mul64To128Hi(op, barrett_ratio_for_u64_);
-        u64 res = op - approx_quotient * prime_;
-        // res in [0, 2*prime)
-
+        U approx_quotient;
+        if constexpr (std::is_same_v<U, u64>) {
+            // floor(op * floor(2^64/prime) / 2^64) ≈ floor(op / prime)
+            approx_quotient = static_cast<u64>(
+                (static_cast<u128>(op) * barrett_ratio_for_u64_) >> 64);
+        } else {
+            // U = u32: use the 32-bit Barrett ratio floor(2^32/prime) so that
+            // floor(op * ratio / 2^32) ≈ floor(op / prime).
+            approx_quotient = static_cast<u32>(
+                (static_cast<u64>(op) * barrett_ratio_for_u32_) >> 32);
+        }
+        U res = static_cast<U>(op - approx_quotient * prime_);
         reduceModFactor<2, OutputModFactor>(res);
         return res;
     }
 
-    // Basic Assumption:
-    //     4 * prime < 2^64
-    // Precomputation:
-    //     1. twoTo64 = 2^64 modulo prime
-    //     2. twoTo64Shoup = Scaled approximation to twoTo64 / prime,
-    //       in the fashion of Shoup's modular multiplication.
-    // Rough algorithm description:
-    //     1. Decompose the 128-bit integer (op) into (hi) * 2^64 + (lo).
-    //     2. Do modular multiplication (hi) * 2^64 in Shoup's way, using the
-    //       precomputed values.
-    //     3. Do Barret reduction (lo) which is a 64-bit integer.
-    //     4. Add two results of step 2 and step 3.
-    template <int OutputModFactor = 1> u64 reduceBarrett(u128 op) const {
+    /**
+     * @brief Barrett reduction of a u128 value.
+     *
+     * For U = u64 this uses the full two-step 128-bit Barrett algorithm.
+     * For U = u32 it reduces the 128-bit value to 64 bits first, then to U.
+     */
+    template <int OutputModFactor = 1> U reduceBarrett(u128 op) const {
         static_assert((OutputModFactor == 1) || (OutputModFactor == 2) ||
                           (OutputModFactor == 4),
                       "OutputModFactor must be 1, 2 or 4");
 
-        u64 hi = u128Hi(op);
-        u64 lo = u128Lo(op);
+        if constexpr (std::is_same_v<U, u64>) {
+            u64 hi = u128Hi(op);
+            u64 lo = u128Lo(op);
 
-        u64 quot = mul64To128Hi(hi, two_to_64_shoup_) +
-                   mul64To128Hi(lo, barrett_ratio_for_u64_);
-        u64 res = hi * two_to_64_ + lo;
-        res -= quot * prime_;
+            u64 quot = mul64To128Hi(hi, two_to_64_shoup_) +
+                       mul64To128Hi(lo, barrett_ratio_for_u64_);
+            u64 res = hi * two_to_64_ + lo;
+            res -= quot * prime_;
 
-        reduceModFactor<4, OutputModFactor>(res);
-        return res;
+            reduceModFactor<4, OutputModFactor>(res);
+            return res;
+        } else {
+            // U = u32: reduce 128-bit → 64-bit, then exact mod → u32.
+            u64 hi = u128Hi(op);
+            u64 lo = u128Lo(op);
+            // Reduce hi * 2^64 mod prime:  hi * (2^64 mod prime)
+            u64 hi_red = mulModSimple(hi % static_cast<u64>(prime_),
+                                      two_to_64_ % static_cast<u64>(prime_),
+                                      static_cast<u64>(prime_));
+            u64 combined = hi_red + lo;
+            // Handle potential overflow from hi_red + lo.
+            if (combined < lo)                                  // overflow
+                combined = combined + static_cast<u64>(prime_); // won't wrap
+            // Result is in [0, prime) — satisfies any OutputModFactor >= 1.
+            return static_cast<U>(combined % static_cast<u64>(prime_));
+        }
     }
 
-    template <int OutputModFactor = 4> u64 mul(u64 op1, u64 op2) const {
-        return reduceBarrett<OutputModFactor>(mul64To128(op1, op2));
+    template <int OutputModFactor = 4> U mul(U op1, U op2) const {
+        using Wide = typename UnitTypeTraits<U>::Wide;
+        return reduceBarrett<OutputModFactor>(
+            static_cast<u128>(static_cast<Wide>(op1) * static_cast<Wide>(op2)));
     }
 
     /**
      * @brief Raises base to expt mod prime using square-and-multiply.
-     * @param base Base value.
-     * @param expt Exponent value.
-     * @return Resulting modular power.
      */
-    u64 pow(u64 base, u64 expt) const {
-        u64 res = 1;
+    U pow(U base, U expt) const {
+        U res = U(1);
         while (expt > 0) {
-            if (expt & 1) // if odd
+            if (expt & 1)
                 res = mul(res, base);
             base = mul(base, base);
             expt >>= 1;
         }
-
         reduceModFactor(res);
-
         return res;
     }
 
     /**
      * @brief Computes a multiplicative inverse modulo the configured prime.
      */
-    u64 inverse(u64 op) const { return pow(op, prime_ - 2); }
+    U inverse(U op) const { return pow(op, static_cast<U>(prime_ - 2)); }
 
     /**
-     * @brief Multiplies each element of @p op1 by @p op2 modulo the prime.
-     * @param op1 Input operand array.
-     * @param op2 Scalar multiplier.
-     * @param res Output array receiving the result.
-     * @param array_size Number of elements to process.
+     * @brief Multiplies each element of op1 by op2 modulo the prime.
      */
-    void constMult(const u64 *op1, const u64 op2, u64 *res,
-                   Size array_size) const;
+    void constMult(const U *op1, const U op2, U *res, Size array_size) const;
 
     /**
-     * @brief Multiplies op1 by a scalar in-place.
+     * @brief Multiplies op1 by a scalar using the default array size.
      */
-    void constMult(const u64 *op1, const u64 op2, u64 *res) const {
+    void constMult(const U *op1, const U op2, U *res) const {
         constMult(op1, op2, res, default_array_size_);
     }
 
     /**
-     * @brief Multiplies op1 by a scalar, storing the result back into op1.
+     * @brief Multiplies op1 by a scalar in-place.
      */
-    void constMultInPlace(u64 *op1, const u64 op2) const {
+    void constMultInPlace(U *op1, const U op2) const {
         constMult(op1, op2, op1);
     }
 
     /**
      * @brief Element-wise modular multiplication of two arrays.
-     * @param res Output array.
-     * @param op1 First operand array.
-     * @param op2 Second operand array.
-     * @param array_size Number of elements to process.
      */
-    void mulVector(u64 *res, const u64 *op1, const u64 *op2,
-                   Size array_size) const;
+    void mulVector(U *res, const U *op1, const U *op2, Size array_size) const;
 
     /**
      * @brief Multiplies two vectors element-wise using the default size.
      */
-    void mulVector(u64 *res, const u64 *op1, const u64 *op2) const {
+    void mulVector(U *res, const U *op1, const U *op2) const {
         mulVector(res, op1, op2, default_array_size_);
     }
 
     /**
      * @brief Applies the forward NTT, copying data when op and res differ.
      */
-    inline void forwardNTT(u64 *op, u64 *res) const {
-        // TODO: implement out-of-place version.
+    inline void forwardNTT(U *op, U *res) const {
         if (op != res)
             std::copy_n(op, default_array_size_, res);
         forwardNTT(res);
@@ -214,13 +233,12 @@ public:
     /**
      * @brief Applies the forward NTT in-place.
      */
-    inline void forwardNTT(u64 *op) const { ntt_->computeForward(op); }
+    inline void forwardNTT(U *op) const { ntt_->computeForward(op); }
 
     /**
      * @brief Applies the inverse NTT, copying data when op and res differ.
      */
-    inline void backwardNTT(u64 *op, u64 *res) const {
-        // TODO: implement out-of-place version.
+    inline void backwardNTT(U *op, U *res) const {
         if (op != res)
             std::copy_n(op, default_array_size_, res);
         backwardNTT(res);
@@ -229,7 +247,7 @@ public:
     /**
      * @brief Applies the inverse NTT in-place.
      */
-    inline void backwardNTT(u64 *op) const { ntt_->computeBackward(op); }
+    inline void backwardNTT(U *op) const { ntt_->computeBackward(op); }
 
     /**
      * @brief Returns the default vector size configured for this instance.
@@ -240,130 +258,136 @@ public:
      */
     u64 get_barrett_expt() const { return barrett_expt_; }
     /**
-     * @brief Returns the Barrett ratio used for reduction.
+     * @brief Returns the Barrett ratio used for reduction (for mulVector).
      */
     u64 get_barrett_ratio() const { return barrett_ratio_; }
 
 private:
-    u64 prime_;
-    u64 two_prime_;
-    u64 barrett_expt_; // 2^(K-1) < prime < 2^K
+    U prime_;
+    U two_prime_;
+    u64 barrett_expt_; // 2^(K-1) < prime < 2^K  (K = bit width)
     u64 barrett_ratio_;
 
     Size default_array_size_; // degree or dimension
 
+    // floor(2^64 / prime) – used in reduceBarrett(U) for U=u64 and in
+    // reduceBarrett(u128) for both types (via mul64To128Hi).
     u64 barrett_ratio_for_u64_;
-    u64 two_to_64_;
-    u64 two_to_64_shoup_;
+    // floor(2^32 / prime) – used only in reduceBarrett(U) for U=u32.
+    u32 barrett_ratio_for_u32_;
+    // The following two fields are only used when U = u64
+    // (reduceBarrett(u128)).
+    u64 two_to_64_;       // 2^64 mod prime
+    u64 two_to_64_shoup_; // floor(two_to_64 * 2^64 / prime)
 
-    std::shared_ptr<NTT> ntt_ = nullptr;
+    std::shared_ptr<NTT<U>> ntt_ = nullptr;
 };
 
 /**
- * @brief Applies the forward NTT to each PolyUnit in @p poly.
- * @param modarith Per-prime modular arithmetic helpers.
- * @param poly Polynomial to transform.
- * @param num_polyunit Optional cap on processed units (0 = all).
- * @param expected_ntt_state Hint used to avoid redundant transforms.
+ * @brief Applies the forward NTT to each PolyUnit in poly.
  */
-template <Size D>
-void forwardNTT(const std::vector<ModArith<D>> &modarith, Polynomial &poly,
-                Size num_polyunit = 0,
+template <Size D, typename U = u64>
+void forwardNTT(const std::vector<ModArith<D, U>> &modarith,
+                PolynomialT<U> &poly, Size num_polyunit = 0,
                 [[maybe_unused]] bool expected_ntt_state = false);
 
 /**
  * @brief Applies the inverse NTT to each PolyUnit.
- * @param modarith Per-prime modular arithmetic helpers.
- * @param poly Polynomial to transform.
- * @param num_polyunit Optional cap on processed units.
- * @param expected_ntt_state Hint used to avoid redundant transforms.
  */
-template <Size D>
-void backwardNTT(const std::vector<ModArith<D>> &modarith, Polynomial &poly,
-                 Size num_polyunit = 0,
+template <Size D, typename U = u64>
+void backwardNTT(const std::vector<ModArith<D, U>> &modarith,
+                 PolynomialT<U> &poly, Size num_polyunit = 0,
                  [[maybe_unused]] bool expected_ntt_state = true);
 
 /**
  * @brief Adds two polynomials coefficient-wise.
- * @param modarith Per-prime helpers.
- * @param op1 First operand.
- * @param op2 Second operand.
- * @param res Result polynomial.
- * @param num_polyunit Optional cap on processed units.
  */
-template <Size D>
-void addPoly(const std::vector<ModArith<D>> &modarith, const Polynomial &op1,
-             const Polynomial &op2, Polynomial &res, Size num_polyunit = 0);
-template <Size D>
-void addPolyConst(const std::vector<ModArith<D>> &modarith,
-                  const Polynomial &op1, const Polynomial &op2, Polynomial &res,
-                  Size num_polyunit = 0);
+template <Size D, typename U = u64>
+void addPoly(const std::vector<ModArith<D, U>> &modarith,
+             const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+             PolynomialT<U> &res, Size num_polyunit = 0);
+
+template <Size D, typename U = u64>
+void addPolyConst(const std::vector<ModArith<D, U>> &modarith,
+                  const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+                  PolynomialT<U> &res, Size num_polyunit = 0);
+
 /**
- * @brief Subtracts @p op2 from @p op1 coefficient-wise.
- * @param modarith Per-prime helpers.
- * @param op1 Minuend polynomial.
- * @param op2 Subtrahend polynomial.
- * @param res Result polynomial.
- * @param num_polyunit Optional cap on processed units.
+ * @brief Subtracts op2 from op1 coefficient-wise.
  */
-template <Size D>
-void subPoly(const std::vector<ModArith<D>> &modarith, const Polynomial &op1,
-             const Polynomial &op2, Polynomial &res, Size num_polyunit = 0);
+template <Size D, typename U = u64>
+void subPoly(const std::vector<ModArith<D, U>> &modarith,
+             const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+             PolynomialT<U> &res, Size num_polyunit = 0);
+
 /**
  * @brief Multiplies two polynomials in the NTT domain.
- * @param modarith Per-prime helpers.
- * @param op1 First operand.
- * @param op2 Second operand.
- * @param res Result polynomial.
- * @param num_polyunit Optional cap on processed units.
  */
-template <Size D>
-void mulPoly(const std::vector<ModArith<D>> &modarith, const Polynomial &op1,
-             const Polynomial &op2, Polynomial &res, Size num_polyunit = 0);
-template <Size D>
-void mulPolyConst(const std::vector<ModArith<D>> &modarith,
-                  const Polynomial &op1, const Polynomial &op2, Polynomial &res,
-                  Size num_polyunit = 0);
+template <Size D, typename U = u64>
+void mulPoly(const std::vector<ModArith<D, U>> &modarith,
+             const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+             PolynomialT<U> &res, Size num_polyunit = 0);
+
+template <Size D, typename U = u64>
+void mulPolyConst(const std::vector<ModArith<D, U>> &modarith,
+                  const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+                  PolynomialT<U> &res, Size num_polyunit = 0);
+
 /**
  * @brief Multiplies a polynomial by a scalar vector within index range.
- * @param modarith Per-prime helpers.
- * @param op1 Polynomial operand.
- * @param op2 Scalar vector pointer.
- * @param res Result polynomial.
- * @param s_id Start index.
- * @param e_id End index (exclusive).
  */
-template <Size D>
-void constMulPoly(const std::vector<ModArith<D>> &modarith,
-                  const Polynomial &op1, const u64 *op2, Polynomial &res,
+template <Size D, typename U = u64>
+void constMulPoly(const std::vector<ModArith<D, U>> &modarith,
+                  const PolynomialT<U> &op1, const U *op2, PolynomialT<U> &res,
                   Size s_id, Size e_id);
 
-#define DECL_MODARITH_HELPER(degree, prefix)                                   \
-    prefix template class ModArith<degree>;                                    \
-    prefix template void forwardNTT(const std::vector<ModArith<degree>> &,     \
-                                    Polynomial &, Size, bool);                 \
-    prefix template void backwardNTT(const std::vector<ModArith<degree>> &,    \
-                                     Polynomial &, Size, bool);                \
-    prefix template void addPoly(const std::vector<ModArith<degree>> &,        \
-                                 const Polynomial &, const Polynomial &,       \
-                                 Polynomial &, Size);                          \
-    prefix template void addPolyConst(const std::vector<ModArith<degree>> &,   \
-                                      const Polynomial &, const Polynomial &,  \
-                                      Polynomial &, Size);                     \
-    prefix template void subPoly(const std::vector<ModArith<degree>> &,        \
-                                 const Polynomial &, const Polynomial &,       \
-                                 Polynomial &, Size);                          \
-    prefix template void mulPoly(const std::vector<ModArith<degree>> &,        \
-                                 const Polynomial &, const Polynomial &,       \
-                                 Polynomial &, Size);                          \
-    prefix template void mulPolyConst(const std::vector<ModArith<degree>> &,   \
-                                      const Polynomial &, const Polynomial &,  \
-                                      Polynomial &, Size);                     \
-    prefix template void constMulPoly(const std::vector<ModArith<degree>> &,   \
-                                      const Polynomial &, const u64 *,         \
-                                      Polynomial &, Size, Size);
+// ---------------------------------------------------------------------------
+// Explicit-instantiation declaration macros
+// ---------------------------------------------------------------------------
 
-#define D(degree) DECL_MODARITH_HELPER(degree, extern)
+#define DECL_MODARITH_HELPER(degree, u_type, prefix)                           \
+    prefix template class ModArith<degree, u_type>;                            \
+    prefix template void forwardNTT(                                           \
+        const std::vector<ModArith<degree, u_type>> &, PolynomialT<u_type> &,  \
+        Size, bool);                                                           \
+    prefix template void backwardNTT(                                          \
+        const std::vector<ModArith<degree, u_type>> &, PolynomialT<u_type> &,  \
+        Size, bool);                                                           \
+    prefix template void addPoly(                                              \
+        const std::vector<ModArith<degree, u_type>> &,                         \
+        const PolynomialT<u_type> &, const PolynomialT<u_type> &,              \
+        PolynomialT<u_type> &, Size);                                          \
+    prefix template void addPolyConst(                                         \
+        const std::vector<ModArith<degree, u_type>> &,                         \
+        const PolynomialT<u_type> &, const PolynomialT<u_type> &,              \
+        PolynomialT<u_type> &, Size);                                          \
+    prefix template void subPoly(                                              \
+        const std::vector<ModArith<degree, u_type>> &,                         \
+        const PolynomialT<u_type> &, const PolynomialT<u_type> &,              \
+        PolynomialT<u_type> &, Size);                                          \
+    prefix template void mulPoly(                                              \
+        const std::vector<ModArith<degree, u_type>> &,                         \
+        const PolynomialT<u_type> &, const PolynomialT<u_type> &,              \
+        PolynomialT<u_type> &, Size);                                          \
+    prefix template void mulPolyConst(                                         \
+        const std::vector<ModArith<degree, u_type>> &,                         \
+        const PolynomialT<u_type> &, const PolynomialT<u_type> &,              \
+        PolynomialT<u_type> &, Size);                                          \
+    prefix template void constMulPoly(                                         \
+        const std::vector<ModArith<degree, u_type>> &,                         \
+        const PolynomialT<u_type> &, const u_type *, PolynomialT<u_type> &,    \
+        Size, Size);
+
+// Declare for u64 (default)
+#ifdef DEB_U64
+#define D(degree) DECL_MODARITH_HELPER(degree, u64, extern)
 DEGREE_SET
 #undef D
+#endif
+
+// Declare for u32
+#ifdef DEB_U32
+DECL_MODARITH_HELPER(1, u32, extern)
+#endif
+
 } // namespace deb::utils

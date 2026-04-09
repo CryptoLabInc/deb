@@ -51,13 +51,23 @@ using PresetVariant = std::variant<
 #define X(p) p,
     PRESET_LIST
 #undef X
-        EMPTY>;
+#ifdef DEB_U32
+#define X32(p) p,
+        PRESET_LIST_U32
+#undef X32
+#endif
+            EMPTY>;
 
 inline std::unordered_map<Preset, PresetVariant> preset_map = {
 #define X(p) {PRESET_##p, p{}},
-    PRESET_LIST_WITH_EMPTY
+    PRESET_LIST
 #undef X
-};
+#ifdef DEB_U32
+#define X32(p) {PRESET_##p, p{}},
+        PRESET_LIST_U32
+#undef X32
+#endif
+    {PRESET_EMPTY, EMPTY{}}};
 
 // Getter functions for constant values from presets.
 #define CV(type, var_name) type get_##var_name(Preset preset);
