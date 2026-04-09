@@ -31,8 +31,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-set(CMAKE_CXX_VISIBILITY_PRESET "hidden")
-set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN OFF)
 
 set(CMAKE_INSTALL_PREFIX
     ${CMAKE_CURRENT_SOURCE_DIR}/install
@@ -71,6 +70,22 @@ option(DEB_INSTALL_ALEA "Install the alea library when installing deb." OFF)
 option(DEB_INSTALL_FLATBUFFERS
        "Install the flatbuffers library when installing deb." OFF)
 option(DEB_RUNTIME_RESOURCE_CHECK "Enable runtime resource check." ON)
+option(DEB_SERIALIZE_API "Enable serialize API." ON)
+option(DEB_SUPPORT_U64 "Compile u64 coefficient word type support." ON)
+option(DEB_SUPPORT_U32 "Compile u32 coefficient word type support." OFF)
+
+if(NOT DEB_SUPPORT_U64 AND NOT DEB_SUPPORT_U32)
+  message(
+    FATAL_ERROR "At least one of DEB_SUPPORT_U64 or DEB_SUPPORT_U32 must be ON."
+  )
+elseif(NOT DEB_SUPPORT_U64)
+  set(DEB_BUILD_BENCHMARK OFF)
+  set(DEB_BUILD_EXAMPLES OFF)
+  message(
+    WARNING
+      "DEB_SUPPORT_U64 is OFF, disabling benchmark suite and examples since they rely on u64 support."
+  )
+endif()
 
 if(BUILD_SHARED_LIBS)
   set(DEB_INSTALL_ALEA
@@ -102,70 +117,75 @@ set(DEB_SRC
     src/Preset.cpp
     src/RandomGenerator.cpp
     src/SecretKeyGenerator.cpp
-    src/SeedGenerator.cpp
-    src/Serialize.cpp)
+    src/SeedGenerator.cpp)
 
-add_library(${PROJECT_NAME}_obj OBJECT ${DEB_SRC})
-add_dependencies(${PROJECT_NAME}_obj generate_flatbuffers
-                 generated_param_header)
-set_deb_warnings(${PROJECT_NAME}_obj)
-set_property(TARGET ${PROJECT_NAME}_obj PROPERTY POSITION_INDEPENDENT_CODE ON)
-
-if(NOT MSVC)
-  target_compile_options(${PROJECT_NAME}_obj PRIVATE -Wno-pedantic)
+if(BUILD_SHARED_LIBS)
+  add_library(${PROJECT_NAME} SHARED ${DEB_SRC})
+  target_link_libraries(${PROJECT_NAME}
+                        PUBLIC alea $<$<BOOL:${DEB_SERIALIZE_API}>:flatbuffers>)
+else()
+  add_library(
+    ${PROJECT_NAME} STATIC
+    ${DEB_SRC} $<TARGET_OBJECTS:alea>
+    $<$<BOOL:${DEB_SERIALIZE_API}>:$<TARGET_OBJECTS:flatbuffers>>)
+  target_link_libraries(
+    ${PROJECT_NAME}
+    PUBLIC $<BUILD_INTERFACE:alea>
+           $<$<BOOL:${DEB_SERIALIZE_API}>:$<BUILD_INTERFACE:flatbuffers>>)
 endif()
 
-target_link_libraries(
-  ${PROJECT_NAME}_obj PRIVATE $<BUILD_INTERFACE:alea>
-                              $<BUILD_INTERFACE:flatbuffers>)
+if(DEB_SERIALIZE_API)
+  target_sources(${PROJECT_NAME} PRIVATE src/Serialize.cpp)
+  add_dependencies(${PROJECT_NAME} generated_flatbuffers)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC DEB_SERIALIZE)
+endif()
+add_dependencies(${PROJECT_NAME} generated_param_header)
+add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
+set_deb_warnings(${PROJECT_NAME})
+set_property(TARGET ${PROJECT_NAME} PROPERTY POSITION_INDEPENDENT_CODE ON)
+target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
+
+if(NOT MSVC)
+  target_compile_options(${PROJECT_NAME} PRIVATE -Wno-pedantic)
+endif()
 
 string(TOUPPER "${DEB_EXT_LIB_FOR_SECURE_ZERO}" _deb_secure_zero_backend)
 if(_deb_secure_zero_backend STREQUAL "LIBSODIUM")
-  target_compile_definitions(${PROJECT_NAME}_obj
-                             PUBLIC DEB_SECURE_ZERO_LIBSODIUM)
-  target_link_libraries(${PROJECT_NAME}_obj PRIVATE sodium)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC DEB_SECURE_ZERO_LIBSODIUM)
+  target_link_libraries(${PROJECT_NAME} PRIVATE sodium)
 elseif(_deb_secure_zero_backend STREQUAL "OPENSSL")
-  target_compile_definitions(${PROJECT_NAME}_obj PUBLIC DEB_SECURE_ZERO_OPENSSL)
-  target_link_libraries(${PROJECT_NAME}_obj PRIVATE OpenSSL::Crypto)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC DEB_SECURE_ZERO_OPENSSL)
+  target_link_libraries(${PROJECT_NAME} PRIVATE OpenSSL::Crypto)
 elseif(_deb_secure_zero_backend STREQUAL "NATIVE")
-  target_compile_definitions(${PROJECT_NAME}_obj PUBLIC DEB_SECURE_ZERO_NATIVE)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC DEB_SECURE_ZERO_NATIVE)
 endif()
 unset(_deb_secure_zero_backend)
 
 target_include_directories(
-  ${PROJECT_NAME}_obj
-  PRIVATE $<BUILD_INTERFACE:${PRE_BUILD_DIR}>
-          $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/${PROJECT_NAME}>
-)
+  ${PROJECT_NAME}
+  PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/${PROJECT_NAME}>
+         $<BUILD_INTERFACE:${PRE_BUILD_DIR}>
+         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
 
 if(DEB_RUNTIME_RESOURCE_CHECK)
-  target_compile_definitions(${PROJECT_NAME}_obj PUBLIC DEB_RESOURCE_CHECK)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC DEB_RESOURCE_CHECK)
 endif()
-target_compile_definitions(${PROJECT_NAME}_obj
+
+if(DEB_SUPPORT_U64)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC DEB_U64)
+endif()
+if(DEB_SUPPORT_U32)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC DEB_U32)
+endif()
+target_compile_definitions(${PROJECT_NAME}
                            PUBLIC DEB_ALINAS_LEN=${DEB_MEMORY_ALIGN_SIZE})
-
-add_library(${PROJECT_NAME} STATIC $<TARGET_OBJECTS:alea>
-                                   $<TARGET_OBJECTS:flatbuffers>)
-
-add_library(${PROJECT_NAME}::${PROJECT_NAME} ALIAS ${PROJECT_NAME})
-target_link_libraries(${PROJECT_NAME} PUBLIC ${PROJECT_NAME}_obj)
-target_compile_features(${PROJECT_NAME} PUBLIC cxx_std_17)
-
-add_library(${PROJECT_NAME}_DevHeader INTERFACE)
-target_include_directories(
-  ${PROJECT_NAME}_DevHeader INTERFACE include/${PROJECT_NAME}
-                                      $<BUILD_INTERFACE:${PRE_BUILD_DIR}>)
-target_link_libraries(${PROJECT_NAME}_DevHeader INTERFACE alea flatbuffers)
 
 if(DEB_BUILD_WITH_OMP)
   find_package(OpenMP REQUIRED)
-  target_link_libraries(${PROJECT_NAME}_obj PRIVATE OpenMP::OpenMP_CXX)
-  target_link_libraries(${PROJECT_NAME}_DevHeader INTERFACE OpenMP::OpenMP_CXX)
-  target_compile_definitions(${PROJECT_NAME}_obj PRIVATE DEB_OPENMP)
-  target_compile_definitions(${PROJECT_NAME}_DevHeader INTERFACE DEB_OPENMP)
+  target_link_libraries(${PROJECT_NAME} PUBLIC OpenMP::OpenMP_CXX)
+  target_compile_definitions(${PROJECT_NAME} PUBLIC DEB_OPENMP)
   if(MSVC)
-    target_compile_options(${PROJECT_NAME}_obj PRIVATE -openmp:llvm)
-    target_compile_options(${PROJECT_NAME}_DevHeader INTERFACE -openmp:llvm)
+    target_compile_options(${PROJECT_NAME} PUBLIC -openmp:llvm)
   endif()
 endif()
 
@@ -227,7 +247,7 @@ endif()
 if(DEB_INSTALL)
   include(GNUInstallDirs)
   install(
-    TARGETS ${PROJECT_NAME} ${PROJECT_NAME}_obj
+    TARGETS ${PROJECT_NAME}
     EXPORT ${PROJECT_NAME}Targets
     ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}

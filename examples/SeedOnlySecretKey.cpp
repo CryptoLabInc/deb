@@ -15,6 +15,9 @@
 */
 
 #include "ExampleUtils.hpp"
+#ifdef DEB_SERIALIZE
+#include "Serialize.hpp"
+#endif
 
 using namespace std;
 using namespace deb;
@@ -27,20 +30,21 @@ int main() {
     RNGSeed sk_seed = SeedGenerator::Gen();
     // Seed only secret key
     SecretKey seed_only_sk(preset, sk_seed);
+    // Generate coeff from the seed
+    SecretKey coeff_only_sk(preset, false);
+    SecretKeyGenerator::GenCoeffInplace(preset, coeff_only_sk.coeffs(), sk_seed);
 
+#ifdef DEB_SERIALIZE
     // Serialize seed only secret key
     ostringstream os;
     serializeToStream(seed_only_sk, os);
     std::cout << "Serialized secret key size (seed only): " << os.str().size() << " bytes" << std::endl;
 
-    // Generate coeff from the seed
-    SecretKey coeff_only_sk(preset, false);
-    SecretKeyGenerator::GenCoeffInplace(preset, coeff_only_sk.coeffs(), sk_seed);
-
     // Serialize coeff only secret key
     os = ostringstream(); // Clear the stream
     serializeToStream(coeff_only_sk, os);
     std::cout << "Serialized secret key size (coeff only): " << os.str().size() << " bytes" << std::endl;
+#endif
 
 #if defined(DEB_RESOURCE_CHECK) && defined(NDEBUG)
     try {

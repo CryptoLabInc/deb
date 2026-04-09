@@ -28,8 +28,8 @@ namespace deb {
 
 constexpr Size MAX_DECRYPT_SIZE = 2;
 
-template <Preset P>
-DecryptorT<P>::DecryptorT() : PresetTraits<P>(preset), fft_(degree) {
+template <Preset P, typename U>
+DecryptorT<P, U>::DecryptorT() : PresetTraits<P, U>(preset), fft_(degree) {
     if constexpr (P == PRESET_EMPTY) {
         throw std::runtime_error("[Decryptor] Preset template must be "
                                  "specified when preset is not given");
@@ -39,26 +39,28 @@ DecryptorT<P>::DecryptorT() : PresetTraits<P>(preset), fft_(degree) {
     }
 }
 
-template <Preset P>
-DecryptorT<P>::DecryptorT(const Preset preset)
-    : PresetTraits<P>(preset), fft_(degree) {
+template <Preset P, typename U>
+DecryptorT<P, U>::DecryptorT(const Preset preset)
+    : PresetTraits<P, U>(preset), fft_(degree) {
     for (Size i = 0; i < MAX_DECRYPT_SIZE; ++i) {
         modarith.emplace_back(degree, primes[i]);
     }
 }
 
-template <Preset P>
+template <Preset P, typename U>
 template <typename MSG,
           std::enable_if_t<!std::is_pointer_v<std::decay_t<MSG>>, int>>
-void DecryptorT<P>::decrypt(const Ciphertext &ctxt, const SecretKey &sk,
-                            MSG &msg, Real scale) const {
+void DecryptorT<P, U>::decrypt(const CiphertextT<U> &ctxt,
+                               const SecretKeyT<U> &sk, MSG &msg,
+                               Real scale) const {
     decrypt(ctxt, sk, &msg, scale);
 }
 
-template <Preset P>
+template <Preset P, typename U>
 template <typename MSG>
-void DecryptorT<P>::decrypt(const Ciphertext &ctxt, const SecretKey &sk,
-                            MSG *msg, Real scale) const {
+void DecryptorT<P, U>::decrypt(const CiphertextT<U> &ctxt,
+                               const SecretKeyT<U> &sk, MSG *msg,
+                               Real scale) const {
     deb_assert(ctxt.numPoly() > 0,
                "[Decryptor::decrypt] Ciphertext size is zero");
     deb_assert(sk.numPoly() > 0,
@@ -75,14 +77,14 @@ void DecryptorT<P>::decrypt(const Ciphertext &ctxt, const SecretKey &sk,
         static_cast<int>(ctxt[0].size() * (degree >> 10));
     utils::setOmpThreadLimit(max_num_threads);
 
-    Ciphertext ctxt_copy =
+    CiphertextT<U> ctxt_copy =
         ctxt.deepCopy(std::min(ctxt[0].size(), MAX_DECRYPT_SIZE));
-    Polynomial &ax = ctxt_copy[ctxt_copy.numPoly() - 1];
+    PolynomialT<U> &ax = ctxt_copy[ctxt_copy.numPoly() - 1];
     if (!ax[0].isNTT()) {
         forwardNTT(modarith, ax);
     }
     for (Size i = 0; i < num_secret; ++i) {
-        Ciphertext ctxt_tmp(ctxt_copy, i);
+        CiphertextT<U> ctxt_tmp(ctxt_copy, i);
         for (Size j = 0; j < ctxt_tmp.numPoly(); ++j) {
             if (!ctxt_tmp[j][0].isNTT()) {
                 forwardNTT(modarith, ctxt_tmp[j]);
@@ -90,11 +92,11 @@ void DecryptorT<P>::decrypt(const Ciphertext &ctxt, const SecretKey &sk,
         }
         if constexpr (std::is_same_v<MSG, Message> ||
                       std::is_same_v<MSG, FMessage>) {
-            Polynomial ptxt_tmp = innerDecrypt(ctxt_tmp, sk[i], ax);
+            PolynomialT<U> ptxt_tmp = innerDecrypt(ctxt_tmp, sk[i], ax);
             decode(ptxt_tmp, msg[i], scale);
         } else if constexpr (std::is_same_v<MSG, CoeffMessage> ||
                              std::is_same_v<MSG, FCoeffMessage>) {
-            Polynomial ptxt_tmp = innerDecrypt(ctxt_tmp, sk[i], ax);
+            PolynomialT<U> ptxt_tmp = innerDecrypt(ctxt_tmp, sk[i], ax);
             decodeWithoutFFT(ptxt_tmp, msg[i], scale);
         } else {
             throw std::runtime_error(
@@ -104,17 +106,19 @@ void DecryptorT<P>::decrypt(const Ciphertext &ctxt, const SecretKey &sk,
     utils::unsetOmpThreadLimit();
 }
 
-template <Preset P>
-Polynomial
-DecryptorT<P>::innerDecrypt(const Ciphertext &ctxt, const Polynomial &sx,
-                            const std::optional<Polynomial> &ax) const {
-    Polynomial ptxt(preset, std::min(ctxt[0].size(), MAX_DECRYPT_SIZE));
+template <Preset P, typename U>
+PolynomialT<U>
+DecryptorT<P, U>::innerDecrypt(const CiphertextT<U> &ctxt,
+                               const PolynomialT<U> &sx,
+                               const std::optional<PolynomialT<U>> &ax) const {
+    PolynomialT<U> ptxt(preset, std::min(ctxt[0].size(), MAX_DECRYPT_SIZE));
     for (u64 i = 0; i < ptxt.size(); ++i) {
         ptxt[i].setNTT(ctxt[0][i].isNTT());
     }
     // m = c_0 + (c_1 + ... + (c_{n-1} + c_n * s) * s ... ) * s
     u64 last_idx = ctxt.numPoly() - 1;
-    const Polynomial &tmp = (ax.has_value()) ? ax.value() : ctxt[last_idx--];
+    const PolynomialT<U> &tmp =
+        (ax.has_value()) ? ax.value() : ctxt[last_idx--];
 
     PRAGMA_OMP(omp parallel) {
         u64 idx = last_idx;
@@ -129,10 +133,10 @@ DecryptorT<P>::innerDecrypt(const Ciphertext &ctxt, const Polynomial &sx,
     return ptxt;
 }
 
-template <Preset P>
+template <Preset P, typename U>
 template <typename CMSG>
-void DecryptorT<P>::decodeWithSinglePoly(const Polynomial &ptxt, CMSG &coeff,
-                                         Real scale) const {
+void DecryptorT<P, U>::decodeWithSinglePoly(const PolynomialT<U> &ptxt,
+                                            CMSG &coeff, Real scale) const {
     const u64 ptxt_degree = ptxt[0].degree();
     const auto full_degree = static_cast<Size>(degree);
     deb_assert(coeff.size() >= ptxt_degree,
@@ -142,7 +146,7 @@ void DecryptorT<P>::decodeWithSinglePoly(const Polynomial &ptxt, CMSG &coeff,
     const u64 half_prime = prime >> 1;
     const auto gap = static_cast<Size>(full_degree / ptxt_degree);
 
-    u64 *interim = ptxt[0].data();
+    U *interim = ptxt[0].data();
 
     if (ptxt[0].isNTT()) {
         modarith[0].backwardNTT(interim);
@@ -151,8 +155,9 @@ void DecryptorT<P>::decodeWithSinglePoly(const Polynomial &ptxt, CMSG &coeff,
     Real tmp;
 
     for (Size i = 0, idx = 0; i < ptxt_degree; i++, idx += gap) {
-        if (interim[idx] > half_prime) {
-            tmp = -1.0 * static_cast<Real>(prime - interim[idx]);
+        if (static_cast<u64>(interim[idx]) > half_prime) {
+            tmp = -1.0 *
+                  static_cast<Real>(prime - static_cast<u64>(interim[idx]));
         } else {
             tmp = static_cast<Real>(interim[idx]);
         }
@@ -164,10 +169,10 @@ void DecryptorT<P>::decodeWithSinglePoly(const Polynomial &ptxt, CMSG &coeff,
     }
 }
 
-template <Preset P>
+template <Preset P, typename U>
 template <typename CMSG>
-void DecryptorT<P>::decodeWithPolyPair(const Polynomial &ptxt, CMSG &coeff,
-                                       Real scale) const {
+void DecryptorT<P, U>::decodeWithPolyPair(const PolynomialT<U> &ptxt,
+                                          CMSG &coeff, Real scale) const {
     const auto full_degree = static_cast<Size>(degree);
     const auto ptxt_degree = static_cast<Size>(ptxt[0].degree());
     deb_assert(coeff.size() >= ptxt_degree,
@@ -180,8 +185,8 @@ void DecryptorT<P>::decodeWithPolyPair(const Polynomial &ptxt, CMSG &coeff,
     const u64 bezout0 = modarith[1].inverse(prime0);
     const u64 bezout1 = modarith[0].inverse(prime1);
 
-    u64 *ptxt0 = ptxt[0].data();
-    u64 *ptxt1 = ptxt[1].data();
+    U *ptxt0 = ptxt[0].data();
+    U *ptxt1 = ptxt[1].data();
 
     if (ptxt[0].isNTT()) {
         modarith[0].backwardNTT(ptxt0);
@@ -197,8 +202,8 @@ void DecryptorT<P>::decodeWithPolyPair(const Polynomial &ptxt, CMSG &coeff,
 
     PRAGMA_OMP(omp parallel for schedule(static))
     for (Size i = 0; i < full_degree; i++) {
-        interim[i] = utils::mul64To128(ptxt0[i], prime1) +
-                     utils::mul64To128(ptxt1[i], prime0);
+        interim[i] = utils::mul64To128(static_cast<u64>(ptxt0[i]), prime1) +
+                     utils::mul64To128(static_cast<u64>(ptxt1[i]), prime0);
         interim[i] =
             (interim[i] >= prod_prime) ? interim[i] - prod_prime : interim[i];
     }
@@ -220,10 +225,10 @@ void DecryptorT<P>::decodeWithPolyPair(const Polynomial &ptxt, CMSG &coeff,
     }
 }
 
-template <Preset P>
+template <Preset P, typename U>
 template <typename CMSG>
-void DecryptorT<P>::decodeWithoutFFT(const Polynomial &ptxt, CMSG &coeff,
-                                     Real scale) const {
+void DecryptorT<P, U>::decodeWithoutFFT(const PolynomialT<U> &ptxt, CMSG &coeff,
+                                        Real scale) const {
     if (ptxt.size() != 1) {
         decodeWithPolyPair(ptxt, coeff, scale);
     } else {
@@ -231,9 +236,10 @@ void DecryptorT<P>::decodeWithoutFFT(const Polynomial &ptxt, CMSG &coeff,
     }
 }
 
-template <Preset P>
+template <Preset P, typename U>
 template <typename MSG>
-void DecryptorT<P>::decode(const Polynomial &ptxt, MSG &msg, Real scale) const {
+void DecryptorT<P, U>::decode(const PolynomialT<U> &ptxt, MSG &msg,
+                              Real scale) const {
 
     deb_assert(msg.size() >= num_slots,
                "[Decryptor::decode] Message size is too small");
@@ -263,8 +269,15 @@ void DecryptorT<P>::decode(const Polynomial &ptxt, MSG &msg, Real scale) const {
     }
 }
 
-#define X(preset) DECRYPT_TYPE_TEMPLATE(PRESET_##preset, )
+#ifdef DEB_U64
+#define X(preset) DECRYPT_TYPE_TEMPLATE(PRESET_##preset, u64, )
 PRESET_LIST_WITH_EMPTY
 #undef X
+#endif
+
+#ifdef DEB_U32
+// currently, u32 supported runtime preset only
+DECRYPT_TYPE_TEMPLATE(PRESET_EMPTY, u32, )
+#endif
 
 } // namespace deb

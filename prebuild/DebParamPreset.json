@@ -7,7 +7,7 @@
     "_comment5": "Necessary values:",
     "_comment6": "    NAME, LOG_DEGREE, NUM_BASE, NUM_QP, NUM_TP, PRIMES.",
     "_comment7": "Optional values (Default):",
-    "_comment8": "    PARENT(Self), RANK(1), NUM_SECRET(1), GADGET_RANK(1),",
+    "_comment8": "    PARENT(Self), RANK(1), NUM_SECRET(1), GADGET_RANK(1), BITS([64])",
     "_comment9": "    ENC_LEVEL(0), HWT(DEGREE*RANK*2/3), SCALE_FACTORS([0.0,...])"
   },
   {
@@ -90,5 +90,27 @@
     "NAME": "FGbMS",
     "PARENT": "FGb",
     "NUM_SECRET": 4
+  },
+
+  {
+    "NAME": "U32",
+    "LOG_DEGREE": 12,
+    "NUM_BASE": 1,
+    "NUM_QP": 1,
+    "NUM_TP": 1,
+    "HWT": 2730,
+    "ENC_LEVEL": 1,
+    "BITS": [
+      32
+    ],
+    "PRIMES": [
+      2147377153,
+      2147352577,
+      274877816833
+    ],
+    "SCALE_FACTORS": [
+      29.415,
+      29.415
+    ]
   }
 ]

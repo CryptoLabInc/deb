@@ -31,40 +31,43 @@ namespace deb {
 
 /**
  * @brief Generates secret keys and secret coefficients for CKKS presets.
+ *
+ * @tparam U Coefficient word type (u32 or u64, default u64).
  */
-class SecretKeyGenerator {
+template <typename U = u64> class SecretKeyGeneratorT {
 public:
     /**
      * @brief Builds a generator bound to the supplied preset.
      * @param preset Target preset.
      */
-    SecretKeyGenerator(const Preset preset);
+    SecretKeyGeneratorT(const Preset preset);
 
     /**
      * @brief Generates a new secret key.
      * @param seeds Optional deterministic RNG seeds.
      * @return Fresh secret key.
      */
-    SecretKey genSecretKey(std::optional<const RNGSeed> seeds = std::nullopt);
+    SecretKeyT<U>
+    genSecretKey(std::optional<const RNGSeed> seeds = std::nullopt);
     /**
      * @brief Generates a secret key into the provided object.
      * @param sk Output storage for secret key.
      * @param seeds Optional deterministic seed override.
      */
-    void genSecretKeyInplace(SecretKey &sk,
+    void genSecretKeyInplace(SecretKeyT<U> &sk,
                              std::optional<const RNGSeed> seeds = std::nullopt);
     /**
      * @brief Builds a secret key from explicit coefficient data.
      * @param coeffs Pointer to coefficient array sized per preset degree.
      * @return Secret key containing the provided coefficients.
      */
-    SecretKey genSecretKeyFromCoeff(const i8 *coeffs);
+    SecretKeyT<U> genSecretKeyFromCoeff(const i8 *coeffs);
     /**
      * @brief Writes coefficient data into an existing secret key.
      * @param sk Output storage for secret key.
      * @param coeffs Pointer to coefficient array sized per preset degree.
      */
-    void genSecretKeyFromCoeffInplace(SecretKey &sk, const i8 *coeffs);
+    void genSecretKeyFromCoeffInplace(SecretKeyT<U> &sk, const i8 *coeffs);
 
     /**
      * @brief Generates secret-key coefficients deterministically.
@@ -92,14 +95,15 @@ public:
      * @param level Optional modulus level limitation.
      * @return Secret key containing the embedded representation.
      */
-    static SecretKey ComputeEmbedding(const Preset preset, const i8 *coeffs,
-                                      std::optional<Size> level = std::nullopt);
+    static SecretKeyT<U>
+    ComputeEmbedding(const Preset preset, const i8 *coeffs,
+                     std::optional<Size> level = std::nullopt);
     /**
      * @brief Writes an embedding into an existing secret key.
      * @param sk Output storage for secret key.
      * @param coeffs Source coefficient data.
      */
-    static void ComputeEmbeddingInplace(SecretKey &sk, const i8 *coeffs);
+    static void ComputeEmbeddingInplace(SecretKeyT<U> &sk, const i8 *coeffs);
 
     /**
      * @brief Convenience wrapper that constructs a generator and produces a
@@ -108,7 +112,7 @@ public:
      * @param seeds Optional deterministic seed.
      * @return Newly generated secret key.
      */
-    static SecretKey
+    static SecretKeyT<U>
     GenSecretKey(const Preset preset,
                  std::optional<const RNGSeed> seeds = std::nullopt);
     /**
@@ -118,7 +122,7 @@ public:
      * @param seeds Optional deterministic seed.
      */
     static void
-    GenSecretKeyInplace(SecretKey &sk,
+    GenSecretKeyInplace(SecretKeyT<U> &sk,
                         std::optional<const RNGSeed> seeds = std::nullopt);
 
     /**
@@ -128,15 +132,16 @@ public:
      * @param coeffs Pointer to coefficient data.
      * @return Secret key containing the provided coefficients.
      */
-    static SecretKey GenSecretKeyFromCoeff(const Preset preset,
-                                           const i8 *coeffs);
+    static SecretKeyT<U> GenSecretKeyFromCoeff(const Preset preset,
+                                               const i8 *coeffs);
     /**
      * @brief Writes coefficient data into an existing secret key without
      * instantiating a generator.
      * @param sk Output storage for secret key.
      * @param coeffs Pointer to coefficient data.
      */
-    static void GenSecretKeyFromCoeffInplace(SecretKey &sk, const i8 *coeffs);
+    static void GenSecretKeyFromCoeffInplace(SecretKeyT<U> &sk,
+                                             const i8 *coeffs);
 
 private:
     const Preset preset_;
@@ -147,6 +152,21 @@ private:
  * @param sk Secret key to complete.
  * @param level Optional modulus level restriction.
  */
-void completeSecretKey(SecretKey &sk, std::optional<Size> level = std::nullopt);
+template <typename U = u64>
+void completeSecretKey(SecretKeyT<U> &sk,
+                       std::optional<Size> level = std::nullopt);
+
+// Explicit instantiation declarations
+#ifdef DEB_U64
+using SecretKeyGenerator = SecretKeyGeneratorT<u64>;
+extern template class SecretKeyGeneratorT<u64>;
+extern template void completeSecretKey<u64>(SecretKey &, std::optional<Size>);
+#endif
+#ifdef DEB_U32
+using SecretKeyGenerator32 = SecretKeyGeneratorT<u32>;
+extern template class SecretKeyGeneratorT<u32>;
+extern template void completeSecretKey<u32>(SecretKey32 &, std::optional<Size>);
+
+#endif
 
 } // namespace deb

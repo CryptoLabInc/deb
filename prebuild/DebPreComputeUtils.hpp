@@ -93,6 +93,7 @@ struct CustomP {
     uint32_t NUM_SECRET = 1;
     uint32_t GADGET_RANK = 1;
     uint32_t HWT = 0;
+    std::vector<uint32_t> BITS;
     std::vector<double> SCALE_FACTORS;
 };
 
@@ -122,6 +123,8 @@ struct PresetP {
     uint32_t GADGET_RANK = 1;
     bool has_GADGET_RANK = false;
 
+    std::vector<uint32_t> BITS;
+    bool has_BITS = false;
     std::vector<uint64_t> PRIMES;
     bool has_PRIMES = false;
     std::vector<double> SCALE_FACTORS;
@@ -143,6 +146,7 @@ struct FinalPreset {
     uint32_t RANK = 1;
     uint32_t NUM_SECRET = 1;
     uint32_t GADGET_RANK = 1;
+    std::vector<uint32_t> BITS;
     std::vector<uint64_t> PRIMES;
     // precomputed values
     std::vector<double> SCALE_FACTORS;
@@ -182,6 +186,7 @@ static CustomP parse_custom_preset(const json &j) {
     p.GADGET_RANK = get_u32(j, "GADGET_RANK", has, p.GADGET_RANK);
     p.NUM_SECRET = get_u32(j, "NUM_SECRET", has, p.NUM_SECRET);
     p.HWT = get_u32(j, "HWT", has, (1 << (p.LOG_DEGREE)) * p.RANK * 2 / 3);
+    p.BITS.push_back(64);
     if (j.contains("SCALE_FACTORS")) {
         for (const auto &v : j.at("SCALE_FACTORS")) {
             p.SCALE_FACTORS.push_back(v.get<double>());
@@ -212,6 +217,14 @@ static PresetP parse_raw_preset(const json &j) {
     r.NUM_SECRET = get_u32(j, "NUM_SECRET", r.has_NUM_SECRET, r.NUM_SECRET);
     r.GADGET_RANK = get_u32(j, "GADGET_RANK", r.has_GADGET_RANK, r.GADGET_RANK);
 
+    if (j.contains("BITS")) {
+        r.has_BITS = true;
+        for (const auto &v : j.at("BITS")) {
+            r.BITS.push_back(v.get<uint32_t>());
+        }
+    } else {
+        r.BITS.push_back(64);
+    }
     if (j.contains("PRIMES")) {
         r.has_PRIMES = true;
         for (const auto &v : j.at("PRIMES")) {
@@ -422,6 +435,7 @@ resolve_one(const std::string &name,
         out.NUM_SECRET = cr.NUM_SECRET;
         out.GADGET_RANK = cr.GADGET_RANK;
         out.HWT = cr.HWT;
+        out.BITS = cr.BITS;
 
         out.PRIMES =
             computePrimes(cr.LOG_DEGREE, cr.LOG_BP_SIZE, cr.LOG_QP_SIZE,
@@ -455,6 +469,7 @@ resolve_one(const std::string &name,
             pick_u32(r.has_NUM_SECRET, r.NUM_SECRET, base.NUM_SECRET);
         out.GADGET_RANK =
             pick_u32(r.has_GADGET_RANK, r.GADGET_RANK, base.GADGET_RANK);
+        out.BITS = r.BITS;
 
         if (r.has_PRIMES)
             out.PRIMES = r.PRIMES;
@@ -488,8 +503,10 @@ resolve_one(const std::string &name,
     return memo[name];
 }
 
-static void write_header(const std::string &out_path,
-                         const std::vector<FinalPreset> &finals) {
+static void
+write_header(const std::string &out_path,
+             const std::vector<FinalPreset> &finals,
+             const std::unordered_set<std::string> &template_preset) {
     std::ofstream os(out_path);
     if (!os)
         throw std::runtime_error("Failed to open output: " + out_path);
@@ -503,10 +520,33 @@ static void write_header(const std::string &out_path,
     os << "namespace deb {\n\n";
     os << "#define PRESET_LIST";
     for (const auto &final : finals) {
-        os << " ";
-        os << "X(" << final.NAME << ")";
+        if (std::any_of(final.BITS.begin(), final.BITS.end(),
+                        [](uint32_t x) { return x == 64; })) {
+            os << " ";
+            os << "X(" << final.NAME << ")";
+        }
     }
-    os << "\n#define PRESET_LIST_WITH_EMPTY PRESET_LIST X(EMPTY)\n\n";
+    os << "\n#define PRESET_LIST_WITH_EMPTY PRESET_LIST X(EMPTY)\n";
+
+    os << "\n#define PRESET_LIST_U32";
+    for (const auto &final : finals) {
+        if (std::any_of(final.BITS.begin(), final.BITS.end(),
+                        [](uint32_t x) { return x == 32; })) {
+            os << " ";
+            os << "X32(" << final.NAME << ")";
+        }
+    }
+    os << "\n#define PRESET_TEMPLATE_LIST";
+    if (template_preset.count("ALL")) {
+        os << " PRESET_LIST\n\n";
+    } else {
+        for (const auto &p : template_preset) {
+            if (p != "EMPTY") {
+                os << " X(" << p << ")";
+            }
+        }
+        os << " X(EMPTY)\n\n";
+    }
 
     os << "enum Preset {\n";
     for (const auto &final : finals) {
@@ -547,6 +587,7 @@ static void write_header(const std::string &out_path,
     empty_preset.NAME = empty_preset.PARENT = "EMPTY";
     empty_preset.PRIMES = {2};
     empty_preset.SCALE_FACTORS = {1};
+    empty_preset.BITS = {64, 32};
     std::vector<FinalPreset> finals_copy = finals;
     finals_copy.push_back(std::move(empty_preset));
     for (const auto &p : finals_copy) {
@@ -588,14 +629,17 @@ static void write_header(const std::string &out_path,
     // Degree set
     std::unordered_set<uint32_t> degrees;
     for (const auto &p : finals_copy) {
-        degrees.insert(1u << p.LOG_DEGREE);
+        if (std::any_of(p.BITS.begin(), p.BITS.end(),
+                        [](uint32_t x) { return x == 64; })) {
+            degrees.insert(1u << p.LOG_DEGREE);
+        }
     }
-    // degrees.erase(1); // remove degree 1
     os << "#define DEGREE_SET \\\n";
     for (const auto &d : degrees) {
         os << "D(" << d << ") ";
     }
     os << "\n";
+
     os << "} // namespace deb\n";
     os.close();
 }

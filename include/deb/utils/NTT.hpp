@@ -17,6 +17,7 @@
 #pragma once
 
 #include "CKKSTypes.hpp"
+#include "utils/Basic.hpp"
 
 #include <cstdint>
 #include <set>
@@ -39,49 +40,66 @@ u64 findPrimitiveRoot(u64 prime);
 
 /**
  * @brief Implements forward and inverse number-theoretic transforms.
+ *
+ * @tparam U Coefficient word type (u32 or u64, default u64).
+ *           All twiddle-factor storage and coefficient arrays use type U.
+ *           The constructor always accepts u64 arguments (prime and degree)
+ *           for compatibility with preset tables; values are narrowed to U
+ *           internally when U = u32.
+ *           Note: for U = u32, the prime must be < 2^30 so that intermediate
+ *           butterfly values (up to 4·prime) fit in a u32.
  */
-class NTT {
+template <typename U = u64> class NTT {
 public:
     NTT() = default;
     /**
      * @brief Creates an NTT instance for a modulus and degree.
-     * @param degree Polynomial degree.
-     * @param prime Prime modulus.
+     * @param degree Polynomial degree (must be a power of two).
+     * @param prime  NTT-friendly prime (prime ≡ 1 mod 2·degree).
      */
     NTT(u64 degree, u64 prime);
 
     /**
      * @brief Performs an in-place forward NTT on the supplied data.
-     * @param op Pointer to coefficient array sized per degree.
+     * @param op Pointer to coefficient array of length degree.
      */
-    void computeForward(u64 *op) const;
+    void computeForward(U *op) const;
 
     /**
      * @brief Performs an in-place inverse NTT on the supplied data.
-     * @param op Pointer to coefficient array sized per degree.
+     * @param op Pointer to coefficient array of length degree.
      */
-    void computeBackward(u64 *op) const;
+    void computeBackward(U *op) const;
 
 private:
-    const u64 prime_;
-    const u64 two_prime_;
-    const u64 degree_;
+    U prime_;
+    U two_prime_;
+    u64 degree_; ///< degree stays u64 (used as loop bounds / array sizes)
 
-    // roots of unity (bit reversed)
-    std::vector<u64> psi_rev_;
-    std::vector<u64> psi_inv_rev_;
-    std::vector<u64> psi_rev_shoup_;
-    std::vector<u64> psi_inv_rev_shoup_;
+    // Roots of unity (bit-reversed order), stored as U
+    std::vector<U> psi_rev_;
+    std::vector<U> psi_inv_rev_;
+    std::vector<U>
+        psi_rev_shoup_; ///< Shoup precomputed: floor(psi · 2^bits / prime)
+    std::vector<U> psi_inv_rev_shoup_;
 
-    // variables for last step of backward NTT
-    u64 degree_inv_;
-    u64 degree_inv_barrett_;
-    u64 degree_inv_w_;
-    u64 degree_inv_w_barrett_;
+    // Precomputed values for the last (combined degree-inverse) step of iNTT
+    U degree_inv_;
+    U degree_inv_barrett_;
+    U degree_inv_w_;
+    U degree_inv_w_barrett_;
 
-    void computeForwardNativeSingleStep(u64 *op, const u64 t) const;
-    void computeBackwardNativeSingleStep(u64 *op, const u64 t) const;
-    void computeBackwardNativeLast(u64 *op) const;
+    void computeForwardNativeSingleStep(U *op, u64 t) const;
+    void computeBackwardNativeSingleStep(U *op, u64 t) const;
+    void computeBackwardNativeLast(U *op) const;
 };
+
+// Explicit instantiation declarations
+#ifdef DEB_U32
+extern template class NTT<u32>;
+#endif
+#ifdef DEB_U64
+extern template class NTT<u64>;
+#endif
 
 } // namespace deb::utils
