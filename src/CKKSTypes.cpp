@@ -17,7 +17,29 @@
 #include "CKKSTypes.hpp"
 
 #include <cstdlib>
+#if defined(__MINGW32__)
+#include <malloc.h>
+#endif
+
 namespace deb {
+
+#if DEB_ALINAS_LEN != 0
+inline void *deb_aligned_alloc(size_t alignment, size_t size) {
+#if defined(__MINGW32__)
+    return _aligned_malloc(size, alignment);
+#else
+    return std::aligned_alloc(alignment, size);
+#endif
+}
+
+inline void deb_aligned_free(void *ptr) {
+#if defined(__MINGW32__)
+    _aligned_free(ptr);
+#else
+    std::free(ptr);
+#endif
+}
+#endif
 
 //// ---------------------------------------------------------------------
 //// Implementation of Message
@@ -72,11 +94,9 @@ PolyUnitT<U>::PolyUnitT(const Preset preset, const Size level, const bool alloc)
     data_ptr_ =
         std::shared_ptr<U[]>(new U[degree_], std::default_delete<U[]>());
 #else
-    auto *buf = static_cast<U *>(::operator new[](
-        sizeof(U) * degree_, std::align_val_t(DEB_ALINAS_LEN)));
-    data_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) {
-        ::operator delete[](p, std::align_val_t(DEB_ALINAS_LEN));
-    });
+    auto *buf = static_cast<U *>(
+        deb_aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * degree_));
+    data_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) { deb_aligned_free(p); });
 #endif
 }
 
@@ -92,11 +112,9 @@ PolyUnitT<U>::PolyUnitT(u64 prime, Size degree, const bool alloc)
     data_ptr_ =
         std::shared_ptr<U[]>(new U[degree_], std::default_delete<U[]>());
 #else
-    auto *buf = static_cast<U *>(::operator new[](
-        sizeof(U) * degree_, std::align_val_t(DEB_ALINAS_LEN)));
-    data_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) {
-        ::operator delete[](p, std::align_val_t(DEB_ALINAS_LEN));
-    });
+    auto *buf = static_cast<U *>(
+        deb_aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * degree_));
+    data_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) { deb_aligned_free(p); });
 #endif
 }
 
@@ -150,8 +168,8 @@ PolynomialT<U>::PolynomialT(const Preset preset, const bool full_level) {
                                         std::default_delete<U[]>());
 #else
     auto *buf = static_cast<U *>(
-        std::aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * num_poly * degree));
-    dealloc_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) { std::free(p); });
+        deb_aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * num_poly * degree));
+    dealloc_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) { deb_aligned_free(p); });
 #endif
     for (Size l = 0; l < num_poly; ++l) {
         polyunits_.emplace_back(preset, l, false);
@@ -167,8 +185,8 @@ PolynomialT<U>::PolynomialT(const Preset preset, const Size custom_size) {
                                         std::default_delete<U[]>());
 #else
     auto *buf = static_cast<U *>(
-        std::aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * custom_size * degree));
-    dealloc_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) { std::free(p); });
+        deb_aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * custom_size * degree));
+    dealloc_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) { deb_aligned_free(p); });
 #endif
     for (Size l = 0; l < custom_size; ++l) {
         polyunits_.emplace_back(preset, l, false);
@@ -198,12 +216,11 @@ PolynomialT<U>::deepCopy(std::optional<Size> num_polyunit) const {
             new U[num_polyunit_val * polyunits_[0].degree()],
             std::default_delete<U[]>());
 #else
-        auto *buf = static_cast<U *>(::operator new[](
-            sizeof(U) * num_polyunit_val * polyunits_[0].degree(),
-            std::align_val_t(DEB_ALINAS_LEN)));
-        copy.dealloc_ptr_ = std::shared_ptr<U[]>(buf, [buf](U *p) {
-            ::operator delete[](buf, std::align_val_t(DEB_ALINAS_LEN));
-        });
+        auto *buf = static_cast<U *>(
+            deb_aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * num_polyunit_val *
+                                                  polyunits_[0].degree()));
+        copy.dealloc_ptr_ =
+            std::shared_ptr<U[]>(buf, [](U *p) { deb_aligned_free(p); });
 #endif
         for (Size i = 0; i < num_polyunit_val; ++i) {
             copy.polyunits_.emplace_back(polyunits_[i].prime(),
