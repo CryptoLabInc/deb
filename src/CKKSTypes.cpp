@@ -216,12 +216,11 @@ PolynomialT<U>::deepCopy(std::optional<Size> num_polyunit) const {
             new U[num_polyunit_val * polyunits_[0].degree()],
             std::default_delete<U[]>());
 #else
-        auto *buf = static_cast<U *>(deb_aligned_alloc(
-            DEB_ALINAS_LEN,
-            sizeof(U) * num_polyunit_val * polyunits_[0].degree()));
-        copy.dealloc_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) {
-            deb_aligned_free(p);
-        });
+        auto *buf = static_cast<U *>(
+            deb_aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * num_polyunit_val *
+                                                  polyunits_[0].degree()));
+        copy.dealloc_ptr_ =
+            std::shared_ptr<U[]>(buf, [](U *p) { deb_aligned_free(p); });
 #endif
         for (Size i = 0; i < num_polyunit_val; ++i) {
             copy.polyunits_.emplace_back(polyunits_[i].prime(),
