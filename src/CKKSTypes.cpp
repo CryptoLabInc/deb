@@ -17,7 +17,7 @@
 #include "CKKSTypes.hpp"
 
 #include <cstdlib>
-#if defined(__MINGW32__) || defined(_MSC_VER)
+#if defined(_WIN32)
 #include <malloc.h>
 #endif
 
@@ -25,7 +25,7 @@ namespace deb {
 
 #if DEB_ALINAS_LEN != 0
 inline void *deb_aligned_alloc(size_t alignment, size_t size) {
-#if defined(__MINGW32__) || defined(_MSC_VER)
+#if defined(_WIN32)
     return _aligned_malloc(size, alignment);
 #else
     return std::aligned_alloc(alignment, size);
@@ -33,7 +33,7 @@ inline void *deb_aligned_alloc(size_t alignment, size_t size) {
 }
 
 inline void deb_aligned_free(void *ptr) {
-#if defined(__MINGW32__) || defined(_MSC_VER)
+#if defined(_WIN32)
     _aligned_free(ptr);
 #else
     std::free(ptr);
