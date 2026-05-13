@@ -99,9 +99,9 @@ KeyGeneratorT<P, U>::KeyGeneratorT(std::optional<const RNGSeed> seeds)
 }
 
 template <Preset P, typename U>
-KeyGeneratorT<P, U>::KeyGeneratorT(const Preset preset,
+KeyGeneratorT<P, U>::KeyGeneratorT(const Preset target_preset,
                                    std::optional<const RNGSeed> seeds)
-    : PresetTraits<P, U>(preset), fft_(degree) {
+    : PresetTraits<P, U>(target_preset), fft_(degree) {
     for (u64 i = 0; i < num_p; ++i) {
         modarith.emplace_back(degree, primes[i]);
     }
@@ -114,9 +114,9 @@ KeyGeneratorT<P, U>::KeyGeneratorT(const Preset preset,
 }
 
 template <Preset P, typename U>
-KeyGeneratorT<P, U>::KeyGeneratorT(const Preset preset,
+KeyGeneratorT<P, U>::KeyGeneratorT(const Preset target_preset,
                                    std::shared_ptr<RandomGenerator> rng)
-    : PresetTraits<P, U>(preset), rng_(std::move(rng)), fft_(degree) {
+    : PresetTraits<P, U>(target_preset), rng_(std::move(rng)), fft_(degree) {
     for (u64 i = 0; i < num_p; ++i) {
         modarith.emplace_back(degree, primes[i]);
     }

@@ -137,10 +137,10 @@ void EncryptorT<P, U>::encrypt(const MSG *msg, const KEY &key,
         for (Size i = 0; i < num_secret; ++i) {
             PolynomialT<U> ptxt_tmp(ptxt, single_num_polyunit * i,
                                     single_num_polyunit);
-            encodeWithoutNTT(msg[i], ptxt_tmp, single_num_polyunit, opt.scale);
+            encode(msg[i], ptxt_tmp, single_num_polyunit, opt.scale);
         }
     } else {
-        encodeWithoutNTT(msg[0], ptxt, single_num_polyunit, opt.scale);
+        encode(msg[0], ptxt, single_num_polyunit, opt.scale);
     }
     innerEncrypt(ptxt, key, single_num_polyunit, ctxt);
 
@@ -282,9 +282,9 @@ void EncryptorT<P, U>::innerEncrypt(const PolynomialT<U> &ptxt, const KEY &key,
 
 template <Preset P, typename U>
 template <typename MSG>
-void EncryptorT<P, U>::embeddingToN(const MSG &msg, const Real &delta,
-                                    PolynomialT<U> &ptxt,
-                                    const Size size) const {
+void EncryptorT<P, U>::innerEncode(const MSG &msg, const Real &delta,
+                                   PolynomialT<U> &ptxt,
+                                   const Size size) const {
     const auto msg_size = msg.size();
     Size gap = degree / msg_size;
     if constexpr (std::is_same_v<MSG, Message>) {
@@ -338,19 +338,18 @@ void EncryptorT<P, U>::embeddingToN(const MSG &msg, const Real &delta,
 
 template <Preset P, typename U>
 template <typename MSG>
-void EncryptorT<P, U>::encodeWithoutNTT(const MSG &msg, PolynomialT<U> &ptxt,
-                                        const Size size,
-                                        const Real scale) const {
+void EncryptorT<P, U>::encode(const MSG &msg, PolynomialT<U> &ptxt,
+                              const Size size, const Real scale) const {
     const Real delta{scale == 0 ? std::pow(static_cast<Real>(2),
                                            scale_factors[ptxt.size() - 1])
                                 : scale};
     if constexpr (std::is_same_v<MSG, CoeffMessage> ||
                   std::is_same_v<MSG, FCoeffMessage>) {
-        embeddingToN(msg, delta, ptxt, size);
+        innerEncode(msg, delta, ptxt, size);
     } else if constexpr (std::is_same_v<MSG, Message>) {
         Message tmp(msg.size(), msg.data());
         fft_.backwardFFT(tmp);
-        embeddingToN(tmp, delta, ptxt, size);
+        innerEncode(tmp, delta, ptxt, size);
     } else if constexpr (std::is_same_v<MSG, FMessage>) {
         Message tmp(msg.size());
         for (Size i = 0; i < msg.size(); ++i) {
@@ -358,10 +357,10 @@ void EncryptorT<P, U>::encodeWithoutNTT(const MSG &msg, PolynomialT<U> &ptxt,
                                     static_cast<Real>(msg[i].imag()));
         }
         fft_.backwardFFT(tmp);
-        embeddingToN(tmp, delta, ptxt, size);
+        innerEncode(tmp, delta, ptxt, size);
     } else {
         throw std::runtime_error(
-            "[Encryptor::encodeWithoutNTT] Unsupported message type");
+            "[Encryptor::encode] Unsupported message type");
     }
 }
 

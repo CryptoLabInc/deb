@@ -23,8 +23,6 @@
 #include <type_traits>
 
 namespace deb {
-// TODO: make template for Decryptor
-// to support constexpr functions with various presets
 /**
  * @brief Provides CKKS decryption and decoding utilities.
  */
@@ -71,6 +69,10 @@ public:
                  Real scale = 0) const;
 
     template <typename MSG>
+    void decryptInplace(CiphertextT<U> &ctxt, const SecretKeyT<U> &sk, MSG *msg,
+                        Real scale = 0) const;
+
+    template <typename MSG>
     /**
      * @brief Decrypts into a vector-like container, validating secret-unit
      * sizing.
@@ -87,21 +89,47 @@ public:
         decrypt(ctxt, sk, msg.data(), scale);
     }
 
-private:
+    /**
+     * @brief Internal decryption function that produces a decrypted polynomial
+     * plaintext.
+     * @param ctxt Ciphertext input.
+     * @param sx Secret key polynomial used for decryption.
+     * @param ax Optional auxiliary polynomial for decryption (e.g., from
+     * switching key).
+     * @return Decrypted polynomial plaintext.
+     */
     PolynomialT<U>
     innerDecrypt(const CiphertextT<U> &ctxt, const PolynomialT<U> &sx,
                  const std::optional<PolynomialT<U>> &ax = std::nullopt) const;
+
+    /**
+     * @brief Internal decode function that handles both single-poly and
+     * poly-pair cases.
+     * @tparam CMSG Coefficient message type (e.g., CoeffMessage,
+     * FCoeffMessage).
+     * @param ptxt Decrypted polynomial plaintext.
+     * @param coeff Coefficient message that receives the decoded coefficients.
+     * @param scale Scaling factor for decoding.
+     */
+    template <typename CMSG>
+    void innerDecode(const PolynomialT<U> &ptxt, CMSG &coeff, Real scale) const;
+    /**
+     * @brief Decodes a decrypted polynomial into a message-like object.
+     * @tparam MSG Message container or view type.
+     * @param ptxt Decrypted polynomial plaintext.
+     * @param msg Message object that receives decoded values.
+     * @param scale Scaling factor for decoding.
+     */
+    template <typename MSG>
+    void decode(const PolynomialT<U> &ptxt, MSG &msg, Real scale) const;
+
+private:
     template <typename CMSG>
     void decodeWithSinglePoly(const PolynomialT<U> &ptxt, CMSG &coeff,
                               Real scale) const;
     template <typename CMSG>
     void decodeWithPolyPair(const PolynomialT<U> &ptxt, CMSG &coeff,
                             Real scale) const;
-    template <typename CMSG>
-    void decodeWithoutFFT(const PolynomialT<U> &ptxt, CMSG &coeff,
-                          Real scale) const;
-    template <typename MSG>
-    void decode(const PolynomialT<U> &ptxt, MSG &msg, Real scale) const;
 
     utils::FFT fft_;
 };
@@ -113,6 +141,9 @@ private:
     prefix template void DecryptorT<preset, u_type>::decrypt<msg_t>(           \
         const CiphertextT<u_type> &ctxt, const SecretKeyT<u_type> &sk,         \
         msg_t *msg, Real scale) const;                                         \
+    prefix template void DecryptorT<preset, u_type>::decryptInplace<msg_t>(    \
+        CiphertextT<u_type> & ctxt, const SecretKeyT<u_type> &sk, msg_t *msg,  \
+        Real scale) const;                                                     \
     prefix template void DecryptorT<preset, u_type>::decrypt<msg_t>(           \
         const CiphertextT<u_type> &ctxt, const SecretKeyT<u_type> &sk,         \
         std::vector<msg_t> &msg, Real scale) const;
@@ -135,11 +166,11 @@ private:
         const PolynomialT<u_type> &ptxt, FCoeffMessage &coeff, Real scale)     \
         const;                                                                 \
     prefix template void                                                       \
-    DecryptorT<preset, u_type>::decodeWithoutFFT<CoeffMessage>(                \
+    DecryptorT<preset, u_type>::innerDecode<CoeffMessage>(                     \
         const PolynomialT<u_type> &ptxt, CoeffMessage &coeff, Real scale)      \
         const;                                                                 \
     prefix template void                                                       \
-    DecryptorT<preset, u_type>::decodeWithoutFFT<FCoeffMessage>(               \
+    DecryptorT<preset, u_type>::innerDecode<FCoeffMessage>(                    \
         const PolynomialT<u_type> &ptxt, FCoeffMessage &coeff, Real scale)     \
         const;                                                                 \
     prefix template void DecryptorT<preset, u_type>::decode<Message>(          \
