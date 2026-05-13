@@ -21,8 +21,8 @@
 namespace {
 
 template <typename U>
-inline void checkSecretKey(const deb::Preset preset,
-                           const deb::SecretKeyT<U> &sk) {
+inline void checkSecretKey([[maybe_unused]] const deb::Preset preset,
+                           [[maybe_unused]] const deb::SecretKeyT<U> &sk) {
     deb_assert(preset == sk.preset(),
                "[KeyGenerator] Preset mismatch between KeyGenerator and "
                "SecretKey.");
@@ -34,7 +34,8 @@ inline void checkSecretKey(const deb::Preset preset,
 };
 
 template <typename U>
-inline void checkSwk(const deb::Preset &preset, const deb::SwitchKeyT<U> &swk,
+inline void checkSwk([[maybe_unused]] const deb::Preset &preset,
+                     [[maybe_unused]] const deb::SwitchKeyT<U> &swk,
                      const deb::SwitchKeyKind expected_type) {
     deb_assert(preset == swk.preset(),
                "[KeyGenerator] Preset mismatch between KeyGenerator and "
@@ -43,9 +44,10 @@ inline void checkSwk(const deb::Preset &preset, const deb::SwitchKeyT<U> &swk,
                "[KeyGenerator] The provided switching key has invalid type.");
 };
 
-inline void checkModPackKeyBundleCondition(const deb::Preset &preset,
-                                           const deb::Preset &preset_from,
-                                           const deb::Preset &preset_to) {
+inline void
+checkModPackKeyBundleCondition([[maybe_unused]] const deb::Preset &preset,
+                               [[maybe_unused]] const deb::Preset &preset_from,
+                               [[maybe_unused]] const deb::Preset &preset_to) {
 
     [[maybe_unused]] const deb::Size from_degree = get_degree(preset_from);
     [[maybe_unused]] const deb::Size from_rank = get_rank(preset_from);

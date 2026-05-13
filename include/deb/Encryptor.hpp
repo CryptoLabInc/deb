@@ -82,18 +82,18 @@ class EncryptorT : public PresetTraits<P, U> {
 public:
     /**
      * @brief Constructs an encryptor bound to a preset and optional RNG seed.
-     * @param preset Target preset.
+     * @param target_preset Target preset.
      * @param seeds Optional deterministic seed.
      */
     explicit EncryptorT(std::optional<const RNGSeed> seeds = std::nullopt);
-    explicit EncryptorT(Preset actual_preset,
+    explicit EncryptorT(Preset target_preset,
                         std::optional<const RNGSeed> seeds = std::nullopt);
     /**
      * @brief Constructs an encryptor with a custom random generator.
-     * @param actual_preset Target preset.
+     * @param target_preset Target preset.
      * @param rng Custom random generator instance.
      */
-    explicit EncryptorT(Preset actual_preset,
+    explicit EncryptorT(Preset target_preset,
                         std::shared_ptr<RandomGenerator> rng);
 
     template <typename MSG, typename KEY,

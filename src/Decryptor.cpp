@@ -40,8 +40,8 @@ DecryptorT<P, U>::DecryptorT() : PresetTraits<P, U>(preset), fft_(degree) {
 }
 
 template <Preset P, typename U>
-DecryptorT<P, U>::DecryptorT(const Preset preset)
-    : PresetTraits<P, U>(preset), fft_(degree) {
+DecryptorT<P, U>::DecryptorT(const Preset target_preset)
+    : PresetTraits<P, U>(target_preset), fft_(degree) {
     for (Size i = 0; i < MAX_DECRYPT_SIZE; ++i) {
         modarith.emplace_back(degree, primes[i]);
     }

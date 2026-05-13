@@ -38,10 +38,11 @@ class DecryptorT : public PresetTraits<P, U> {
 public:
     /**
      * @brief Creates a decryptor for the given preset.
-     * @param preset Target preset that defines polynomial sizes and moduli.
+     * @param target_preset Target preset that defines polynomial sizes and
+     * moduli.
      */
     explicit DecryptorT();
-    explicit DecryptorT(const Preset preset);
+    explicit DecryptorT(const Preset target_preset);
 
     template <typename MSG,
               std::enable_if_t<!std::is_pointer_v<std::decay_t<MSG>>, int> = 0>

@@ -53,11 +53,11 @@ EncryptorT<P, U>::EncryptorT(std::optional<const RNGSeed> seeds)
 }
 
 template <Preset P, typename U>
-EncryptorT<P, U>::EncryptorT(Preset actual_preset,
+EncryptorT<P, U>::EncryptorT(Preset target_preset,
                              std::optional<const RNGSeed> seeds)
-    : PresetTraits<P, U>(actual_preset),
-      ptxt_buffer_(actual_preset, num_p * num_secret),
-      vx_buffer_(actual_preset, true), ex_buffer_(actual_preset, true),
+    : PresetTraits<P, U>(target_preset),
+      ptxt_buffer_(target_preset, num_p * num_secret),
+      vx_buffer_(target_preset, true), ex_buffer_(target_preset, true),
       samples_(buffer_size(degree)), mask_(degree), i_samples_(degree),
       fft_(degree) {
 
@@ -72,11 +72,11 @@ EncryptorT<P, U>::EncryptorT(Preset actual_preset,
 }
 
 template <Preset P, typename U>
-EncryptorT<P, U>::EncryptorT(Preset actual_preset,
+EncryptorT<P, U>::EncryptorT(Preset target_preset,
                              std::shared_ptr<RandomGenerator> rng)
-    : PresetTraits<P, U>(actual_preset),
-      ptxt_buffer_(actual_preset, num_p * num_secret),
-      vx_buffer_(actual_preset, true), ex_buffer_(actual_preset, true),
+    : PresetTraits<P, U>(target_preset),
+      ptxt_buffer_(target_preset, num_p * num_secret),
+      vx_buffer_(target_preset, true), ex_buffer_(target_preset, true),
       samples_(degree + (sizeof(u64) / sizeof(U)) * div_ceil_32(degree)),
       mask_(degree), i_samples_(degree), rng_(std::move(rng)), fft_(degree) {
 

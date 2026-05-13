@@ -22,11 +22,11 @@
 
 namespace deb {
 
-SeedGenerator &SeedGenerator::GetInstance(std::optional<const RNGSeed> seeds) {
+SeedGenerator &SeedGenerator::GetInstance(const std::optional<RNGSeed> &seeds) {
     static SeedGenerator instance(seeds);
     return instance;
 }
-void SeedGenerator::Reseed(const std::optional<const RNGSeed> &seeds) {
+void SeedGenerator::Reseed(const std::optional<RNGSeed> &seeds) {
     const auto &s = seeds.value();
     GetInstance().rng_->reseed(reinterpret_cast<const u8 *>(s.data()),
                                DEB_RNG_SEED_BYTE_SIZE);
@@ -34,23 +34,25 @@ void SeedGenerator::Reseed(const std::optional<const RNGSeed> &seeds) {
 
 RNGSeed SeedGenerator::Gen() { return GetInstance().genSeed(); }
 
-SeedGenerator::SeedGenerator(std::optional<const RNGSeed> seeds) {
+SeedGenerator::SeedGenerator(const std::optional<RNGSeed> &seeds) {
     if (!seeds) {
         std::random_device rd;
-        RNGSeed nseeds;
+        RNGSeed nseeds = {};
         for (size_t i = 0; i < nseeds.size(); ++i) {
             auto ptr = reinterpret_cast<unsigned int *>(&nseeds[i]);
             for (size_t j = 0; j < sizeof(u64) / sizeof(unsigned int); ++j) {
                 ptr[j] = rd();
             }
         }
-        seeds.emplace(nseeds);
+        // seeds.emplace(nseeds);
+        rng_ = createRandomGenerator(nseeds);
+    } else {
+        rng_ = createRandomGenerator(seeds.value());
     }
-    rng_ = createRandomGenerator(seeds.value());
 }
 
 RNGSeed SeedGenerator::genSeed() {
-    RNGSeed seeds;
+    RNGSeed seeds = {};
     rng_->getRandomUint64Array(seeds.data(), DEB_U64_SEED_SIZE);
     return seeds;
 }
