@@ -89,12 +89,16 @@ void DecryptorT<P, U>::decryptInplace(CiphertextT<U> &ctxt,
         static_cast<int>(ctxt[0].size() * (degree >> 10));
     utils::setOmpThreadLimit(max_num_threads);
 
-    PolynomialT<U> &ax = ctxt[ctxt.numPoly() - 1];
+    const Size num_polyunit = std::min(ctxt[0].size(), MAX_DECRYPT_SIZE);
+    PolynomialT<U> ax(ctxt[ctxt.numPoly() - 1]);
+    ax.setSize(preset, num_polyunit);
+
     if (!ax[0].isNTT()) {
         forwardNTT(modarith, ax);
     }
     for (Size i = 0; i < num_secret; ++i) {
         CiphertextT<U> ctxt_tmp(ctxt, i);
+        ctxt_tmp.setNumPolyunit(num_polyunit);
         for (Size j = 0; j < ctxt_tmp.numPoly(); ++j) {
             if (!ctxt_tmp[j][0].isNTT()) {
                 forwardNTT(modarith, ctxt_tmp[j]);
