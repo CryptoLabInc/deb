@@ -39,14 +39,14 @@ public:
      * @return Reference to the singleton instance.
      */
     static SeedGenerator &
-    GetInstance(std::optional<const RNGSeed> seeds = std::nullopt);
+    GetInstance(const std::optional<RNGSeed> &seeds = std::nullopt);
 
     /**
      * @brief Reinitializes the underlying RNG with the provided seed.
      * @param seeds Optional deterministic seed; when empty a random seed is
      * chosen.
      */
-    static void Reseed(const std::optional<const RNGSeed> &seeds);
+    static void Reseed(const std::optional<RNGSeed> &seeds);
     /**
      * @brief Generates a new random seed suitable for deterministic APIs.
      * @return Fresh RNG seed.
@@ -54,7 +54,7 @@ public:
     static RNGSeed Gen();
 
 private:
-    SeedGenerator(std::optional<const RNGSeed> seeds);
+    SeedGenerator(const std::optional<RNGSeed> &seeds);
 
     /**
      * @brief Internal helper that produces a new seed from the RNG state.

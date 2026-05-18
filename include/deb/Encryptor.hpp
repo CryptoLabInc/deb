@@ -82,28 +82,29 @@ class EncryptorT : public PresetTraits<P, U> {
 public:
     /**
      * @brief Constructs an encryptor bound to a preset and optional RNG seed.
-     * @param preset Target preset.
+     * @param target_preset Target preset.
      * @param seeds Optional deterministic seed.
      */
     explicit EncryptorT(std::optional<const RNGSeed> seeds = std::nullopt);
-    explicit EncryptorT(Preset actual_preset,
+    explicit EncryptorT(Preset target_preset,
                         std::optional<const RNGSeed> seeds = std::nullopt);
     /**
      * @brief Constructs an encryptor with a custom random generator.
-     * @param actual_preset Target preset.
+     * @param target_preset Target preset.
      * @param rng Custom random generator instance.
      */
-    explicit EncryptorT(Preset actual_preset,
+    explicit EncryptorT(Preset target_preset,
                         std::shared_ptr<RandomGenerator> rng);
 
     template <typename MSG, typename KEY,
               std::enable_if_t<!std::is_pointer_v<std::decay_t<MSG>>, int> = 0>
     /**
      * @brief Encrypts a message-like object reference with the provided key.
-     * @tparam MSG Message representation type.
+     * @tparam MSG Message representation type (e.g., Message, FMessage,
+     * CoeffMessage, FCoeffMessage).
      * @tparam KEY Secret or switching key type.
      * @param msg Input message object.
-     * @param key Encryption key or switch key.
+     * @param key Secret key or Switching(Encryption) key.
      * @param ctxt Ciphertext that receives the encryption result.
      * @param opt Optional encryption options.
      */
@@ -112,9 +113,10 @@ public:
 
     template <typename MSG, typename KEY>
     /**
-     * @brief Encrypts a vector of messages element-wise.
+     * @brief Encrypts a vector of messages with multi-secret parameters. The
+     * message vector size must match num_secret.
      * @param msg Vector with input messages.
-     * @param key Encryption key.
+     * @param key Secret key or Switching(Encryption) key.
      * @param ctxt Ciphertext result container.
      * @param opt Optional encryption options.
      */
@@ -124,32 +126,70 @@ public:
 
     template <typename MSG, typename KEY>
     /**
-     * @brief Encrypts raw message arrays.
+     * @brief Encrypts a raw array of messages with multi-secret parameters. The
+     * array size must match num_secret.
      * @param msg Pointer to message sequence.
-     * @param key Encryption key.
+     * @param key Secret key or Switching(Encryption) key.
      * @param ctxt Ciphertext result container.
      * @param opt Optional encryption options.
      */
     void encrypt(const MSG *msg, const KEY &key, CiphertextT<U> &ctxt,
                  const EncryptOptions &opt = default_opt) const;
 
-private:
     template <typename KEY>
+    /**
+     * @brief Core encryption routine that produces a ciphertext from a
+     * plaintext polynomial and key.
+     * @tparam KEY Secret or switching key type.
+     * @param ptxt Encoded plaintext polynomial.
+     * @param key Secret or Switching(Encryption) key.
+     * @param num_polyunit Number of PolyUnitT entries to encrypt.
+     * @param ctxt Ciphertext result container.
+     */
     void innerEncrypt([[maybe_unused]] const PolynomialT<U> &ptxt,
                       [[maybe_unused]] const KEY &key,
                       [[maybe_unused]] Size num_polyunit,
                       [[maybe_unused]] CiphertextT<U> &ctxt) const;
 
     template <typename MSG>
-    void embeddingToN(const MSG &msg, const Real &delta, PolynomialT<U> &ptxt,
-                      const Size size) const;
+    /**
+     * @brief Core encode routine that embeds a message into a plaintext
+     * polynomial.
+     * @tparam MSG Message representation type (e.g., Message, FMessage,
+     * CoeffMessage, FCoeffMessage).
+     * @param msg Input message object.
+     * @param delta Scaling factor for embedding.
+     * @param ptxt Output plaintext polynomial.
+     * @param size Number of PolyUnitT entries to embed.
+     */
+    void innerEncode(const MSG &msg, const Real &delta, PolynomialT<U> &ptxt,
+                     const Size size) const;
 
     template <typename MSG>
-    void encodeWithoutNTT(const MSG &msg, PolynomialT<U> &ptxt, const Size size,
-                          const Real scale) const;
+    /**
+     * @brief Encodes a message into a plaintext polynomial.
+     * @tparam MSG Message representation type (e.g., Message, FMessage,
+     * CoeffMessage, FCoeffMessage).
+     * @param msg Input message object.
+     * @param ptxt Output plaintext polynomial.
+     * @param size Number of PolyUnitT entries to encode.
+     * @param scale Scaling factor for embedding.
+     */
+    void encode(const MSG &msg, PolynomialT<U> &ptxt, const Size size,
+                const Real scale) const;
 
+private:
+    /**
+     * @brief Samples a zero-one polynomial.
+     * @param num_polyunit Number of PolyUnitT entries to sample.
+     */
     void sampleZO(const Size num_polyunit) const;
 
+    /**
+     * @brief Samples a Gaussian polynomial.
+     * @param num_polyunit Number of PolyUnitT entries to sample.
+     * @param do_ntt Whether to apply NTT to the sampled polynomial.
+     */
     void sampleGaussian(const Size num_polyunit, const bool do_ntt) const;
 
     std::shared_ptr<RandomGenerator> rng_;
@@ -182,10 +222,10 @@ private:
 #define DECL_ENCRYPT_TEMPLATE_MSG(preset, u_type, msg_t, prefix)               \
     DECL_ENCRYPT_TEMPLATE_MSG_KEY(preset, u_type, msg_t, SecretKeyT, prefix)   \
     DECL_ENCRYPT_TEMPLATE_MSG_KEY(preset, u_type, msg_t, SwitchKeyT, prefix)   \
-    prefix template void EncryptorT<preset, u_type>::embeddingToN<msg_t>(      \
+    prefix template void EncryptorT<preset, u_type>::innerEncode<msg_t>(       \
         const msg_t &msg, const Real &delta, PolynomialT<u_type> &ptxt,        \
         const Size size) const;                                                \
-    prefix template void EncryptorT<preset, u_type>::encodeWithoutNTT<msg_t>(  \
+    prefix template void EncryptorT<preset, u_type>::encode<msg_t>(            \
         const msg_t &msg, PolynomialT<u_type> &ptxt, const Size size,          \
         const Real scale) const;
 

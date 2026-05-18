@@ -18,8 +18,7 @@ cpmaddpackage(URI "gh:google/benchmark@1.9.4" OPTIONS
               "BENCHMARK_ENABLE_TESTING Off")
 
 add_executable(deb-benchmark benchmark.cpp)
-target_link_libraries(deb-benchmark PRIVATE deb_obj deb_DevHeader
-                                            benchmark::benchmark_main)
+target_link_libraries(deb-benchmark PRIVATE deb benchmark::benchmark_main)
 
 enable_language(C)
 cpmaddpackage(
@@ -33,6 +32,5 @@ cpmaddpackage(
   c)
 
 add_executable(deb-benchmark-blake3 benchmark_blake3.cpp)
-target_link_libraries(
-  deb-benchmark-blake3 PRIVATE deb_obj deb_DevHeader benchmark::benchmark_main
-                               BLAKE3::blake3)
+target_link_libraries(deb-benchmark-blake3
+                      PRIVATE deb benchmark::benchmark_main BLAKE3::blake3)
