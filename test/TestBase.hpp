@@ -40,6 +40,10 @@ using namespace deb;
 #define DEB_TEST_EXPECT(statement) EXPECT_DEATH(statement, ".*")
 #endif
 
+#define X(preset) deb::PRESET_##preset,
+inline std::vector<deb::Preset> Presets = {PRESET_LIST};
+#undef X
+
 using MSGS = std::vector<Message>;
 using FMSGS = std::vector<FMessage>;
 using COEFFS = std::vector<CoeffMessage>;
@@ -47,10 +51,10 @@ using FCOEFFS = std::vector<FCoeffMessage>;
 
 class DebTestBase : public ::testing::TestWithParam<Preset> {
 public:
-    const Preset preset{GetParam()};
-    const Size num_slots{get_num_slots(preset)};
-    const Size degree{get_degree(preset)};
-    const Size num_secret{get_num_secret(preset)};
+    Preset preset{GetParam()};
+    Size num_slots{get_num_slots(preset)};
+    Size degree{get_degree(preset)};
+    Size num_secret{get_num_secret(preset)};
 
     Encryptor encryptor{preset};
     Decryptor decryptor{preset};
@@ -181,6 +185,102 @@ public:
         for (Size i = 0; i < num_secret; ++i) {
             for (Size j = 0; j < degree; ++j) {
                 ASSERT_NEAR(coeff1[i][j], coeff2[i][j], tol);
+            }
+        }
+    }
+    // Scales degree complex Message/FMessage values (both real and imag) for
+    // unscaled presets. For real-HEAAN where the message has complex slots.
+    template <typename T> T scale_complex_message(T &msg, uint32_t level) {
+        const double scale = get_scale_factors(preset)[level];
+        if (scale == 0.0) {
+            const double sc =
+                std::pow(2.0, utils::bitWidth(get_primes(preset)[0]) - 4);
+            T scale_msg = gen_empty_real_message<T>();
+            for (Size i = 0; i < num_secret; ++i) {
+                for (Size j = 0; j < degree; ++j) {
+                    if constexpr (std::is_same_v<T, FMSGS>) {
+                        scale_msg[i][j].real(
+                            static_cast<float>(msg[i][j].real() * sc));
+                        scale_msg[i][j].imag(
+                            static_cast<float>(msg[i][j].imag() * sc));
+                    } else {
+                        scale_msg[i][j].real(msg[i][j].real() * sc);
+                        scale_msg[i][j].imag(msg[i][j].imag() * sc);
+                    }
+                }
+            }
+            return scale_msg;
+        }
+        return msg;
+    }
+    // Compares all degree complex values (real + imag).
+    // Used for real-HEAAN Message tests where the decoded output is a
+    // Galois-Hermitian symmetric complex Message.
+    template <typename T>
+    void compare_heaan_msg(T &msg1, T &msg2, double tol) const {
+        for (Size i = 0; i < num_secret; ++i) {
+            for (Size j = 0; j < degree; ++j) {
+                ASSERT_NEAR(static_cast<double>(msg1[i][j].real()),
+                            static_cast<double>(msg2[i][j].real()), tol);
+                ASSERT_NEAR(static_cast<double>(msg1[i][j].imag()),
+                            static_cast<double>(msg2[i][j].imag()), tol);
+            }
+        }
+    }
+    template <typename T> T gen_random_real_message() {
+        T msg;
+        for (Size i = 0; i < num_secret; ++i) {
+            if constexpr (std::is_same_v<T, FMSGS>) {
+                FMessage m(degree);
+                for (Size j = 0; j < degree; ++j) {
+                    m[j].real(static_cast<float>(dist(gen)));
+                    m[j].imag(0.0f);
+                }
+                msg.emplace_back(std::move(m));
+            } else if constexpr (std::is_same_v<T, MSGS>) {
+                Message m(degree);
+                for (Size j = 0; j < degree; ++j) {
+                    m[j].real(dist(gen));
+                    m[j].imag(0.0);
+                }
+                msg.emplace_back(std::move(m));
+            }
+        }
+        return msg;
+    }
+    template <typename T> T gen_empty_real_message() {
+        T msg;
+        for (Size i = 0; i < num_secret; ++i) {
+            msg.emplace_back(degree);
+        }
+        return msg;
+    }
+    template <typename T> T scale_real_message(T &msg, uint32_t level) {
+        const double scale = get_scale_factors(preset)[level];
+        if (scale == 0.0) {
+            const double sc =
+                std::pow(2.0, utils::bitWidth(get_primes(preset)[0]) - 4);
+            T scale_msg = gen_empty_real_message<T>();
+            for (Size i = 0; i < num_secret; ++i) {
+                for (Size j = 0; j < degree; ++j) {
+                    if constexpr (std::is_same_v<T, FMSGS>) {
+                        scale_msg[i][j].real(
+                            static_cast<float>(msg[i][j].real() * sc));
+                    } else {
+                        scale_msg[i][j].real(msg[i][j].real() * sc);
+                    }
+                }
+            }
+            return scale_msg;
+        }
+        return msg;
+    }
+    template <typename T>
+    void compare_real_msg(T &msg1, T &msg2, double tol) const {
+        for (Size i = 0; i < num_secret; ++i) {
+            for (Size j = 0; j < degree; ++j) {
+                ASSERT_NEAR(static_cast<double>(msg1[i][j].real()),
+                            static_cast<double>(msg2[i][j].real()), tol);
             }
         }
     }

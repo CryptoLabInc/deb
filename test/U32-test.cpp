@@ -31,6 +31,7 @@
  */
 
 #include "CKKSTypes.hpp"
+#include "KeyGenerator.hpp"
 #include "TestBase.hpp"
 #include "utils/Basic.hpp"
 #include "utils/ModArith.hpp"
@@ -130,7 +131,7 @@ INSTANTIATE_TEST_SUITE_P(ShoupPrimes, ComputeShoupTest,
 // NTT<u32>
 // =========================================================================
 
-class NttU32Test : public ::testing::TestWithParam<std::tuple<u64, u64>> {
+class NTTU32Test : public ::testing::TestWithParam<std::tuple<u64, u64>> {
 public:
     u64 degree{std::get<0>(GetParam())};
     u64 prime{std::get<1>(GetParam())};
@@ -148,7 +149,7 @@ public:
     }
 };
 
-TEST_P(NttU32Test, RoundTrip) {
+TEST_P(NTTU32Test, RoundTrip) {
     utils::NTT<u32> ntt{degree, prime};
 
     auto orig = randomVector();
@@ -160,7 +161,7 @@ TEST_P(NttU32Test, RoundTrip) {
     EXPECT_EQ(v, orig);
 }
 
-TEST_P(NttU32Test, OneZeroVector) {
+TEST_P(NTTU32Test, OneZeroVector) {
     // NTT([1, 0, 0, ...]) == [1, 1, 1, ...]
     utils::NTT<u32> ntt{degree, prime};
 
@@ -172,7 +173,7 @@ TEST_P(NttU32Test, OneZeroVector) {
     EXPECT_EQ(op, expected);
 }
 
-TEST_P(NttU32Test, ConvolutionViaPointwiseMul) {
+TEST_P(NTTU32Test, ConvolutionViaPointwiseMul) {
     // For negacyclic NTT: NTT(a) * NTT(b) == NTT(a * b mod (X^N + 1)).
     // Verify that a simple polynomial product through NTT is consistent.
     utils::NTT<u32> ntt{degree, prime};
@@ -212,7 +213,7 @@ TEST_P(NttU32Test, ConvolutionViaPointwiseMul) {
 }
 
 #ifdef DEB_U64
-TEST_P(NttU32Test, CompareU64) {
+TEST_P(NTTU32Test, CompareU64) {
     utils::NTT<u32> ntt32{degree, prime};
     utils::NTT<u64> ntt64{degree, prime};
 
@@ -236,13 +237,13 @@ TEST_P(NttU32Test, CompareU64) {
 #endif
 
 INSTANTIATE_TEST_SUITE_P(
-    U32NttParams, NttU32Test,
+    U32NTTParams, NTTU32Test,
     testing::Values(std::tuple<u64, u64>{DEGREE, PRIME_A},
                     std::tuple<u64, u64>{DEGREE, PRIME_B},
                     std::tuple<u64, u64>{DEGREE, PRIME_C},
                     std::tuple<u64, u64>{2 * DEGREE, PRIME_A},
-                    std::tuple<u64, u64>{2 * DEGREE, 2147377153},
-                    std::tuple<u64, u64>{2 * DEGREE, 2147352577}));
+                    std::tuple<u64, u64>{2 * DEGREE, 1073692673},
+                    std::tuple<u64, u64>{2 * DEGREE, 1073668097}));
 
 // =========================================================================
 // ModArith<1, u32>
@@ -450,9 +451,9 @@ TEST_F(PolyUnitU32Test, SetPrime) {
 TEST_F(PolyUnitU32Test, SetNTTFlag) {
     PolyUnitT<u32> pu(prime, deg);
     EXPECT_FALSE(pu.isNTT());
-    pu.setNTT(true);
+    pu.setNTT(utils::NTTType::NEGACYCLIC);
     EXPECT_TRUE(pu.isNTT());
-    pu.setNTT(false);
+    pu.setNTT(utils::NTTType::NONNTT);
     EXPECT_FALSE(pu.isNTT());
 }
 
@@ -461,7 +462,7 @@ TEST_F(PolyUnitU32Test, SetNTTFlag) {
 // =========================================================================
 
 #ifdef DEB_U64
-class NttU32vsU64Test : public ::testing::Test {
+class NTTU32vsU64Test : public ::testing::Test {
 public:
     static constexpr u64 prime = PRIME_A;
     static constexpr Size degree = DEGREE;
@@ -477,7 +478,7 @@ public:
     }
 };
 
-TEST_F(NttU32vsU64Test, ForwardNTTMatchesU64) {
+TEST_F(NTTU32vsU64Test, ForwardNTTMatchesU64) {
     utils::NTT<u32> ntt32{degree, prime};
     utils::NTT<u64> ntt64{degree, prime};
 
@@ -493,7 +494,7 @@ TEST_F(NttU32vsU64Test, ForwardNTTMatchesU64) {
     }
 }
 
-TEST_F(NttU32vsU64Test, BackwardNTTMatchesU64) {
+TEST_F(NTTU32vsU64Test, BackwardNTTMatchesU64) {
     utils::NTT<u32> ntt32{degree, prime};
     utils::NTT<u64> ntt64{degree, prime};
 
@@ -676,4 +677,125 @@ const std::vector<Preset> all_presets32 = {PRESET_LIST_U32
 #undef X32
 };
 INSTANTIATE_TEST_SUITE_P(Presets, Endecrypt32Test,
+                         testing::ValuesIn(all_presets32));
+
+// =========================================================================
+// KeyGenerator32: switching-key generation for u32 presets.
+//
+// Mirrors KeyGen-test.cpp (u64) but exercises KeyGeneratorT<PRESET_EMPTY, u32>
+// against the u32-dedicated preset(s). Verifies that each genXxxKey API:
+//  - runs without exceptions (functional + Inplace forms),
+//  - produces switching keys of the expected ax/bx dimensions for the preset.
+// =========================================================================
+
+class KeyGen32Test : public ::testing::TestWithParam<Preset> {
+public:
+    const Preset preset{GetParam()};
+    const Size num_slots{get_num_slots(preset)};
+    const Size num_secret{get_num_secret(preset)};
+    const Size degree{get_degree(preset)};
+    const Size gadget_rank{get_gadget_rank(preset)};
+    const Size num_p{get_num_p(preset)};
+
+    KeyGenerator32 keygen{preset};
+    SecretKey32 sk{SecretKeyGenerator32::GenSecretKey(preset)};
+
+    std::mt19937 gen{std::random_device{}()};
+    std::uniform_int_distribution<u64> dist_u64{0, UINT64_MAX};
+};
+
+TEST_P(KeyGen32Test, GenEncryptionKey) {
+    SwitchKey32 enckey(preset, SwitchKeyKind::SWK_ENC);
+    ASSERT_NO_THROW(enckey = keygen.genEncKey(sk));
+    ASSERT_NO_THROW(keygen.genEncKeyInplace(enckey, sk));
+
+    ASSERT_EQ(enckey.axSize(), 1);
+    ASSERT_EQ(enckey.bxSize(), num_secret);
+    ASSERT_EQ(enckey.ax().size(), num_p);
+    ASSERT_EQ(enckey.bx().size(), num_p);
+}
+
+TEST_P(KeyGen32Test, GenMultiplicationKey) {
+    SwitchKey32 mulkey(preset, SwitchKeyKind::SWK_MULT);
+    ASSERT_NO_THROW(mulkey = keygen.genMultKey(sk));
+    ASSERT_NO_THROW(keygen.genMultKeyInplace(mulkey, sk));
+
+    ASSERT_EQ(mulkey.axSize(), gadget_rank);
+    ASSERT_EQ(mulkey.bxSize(), gadget_rank * num_secret);
+    ASSERT_EQ(mulkey.ax().size(), num_p);
+    ASSERT_EQ(mulkey.bx().size(), num_p);
+}
+
+TEST_P(KeyGen32Test, GenConjugationKey) {
+    SwitchKey32 conjkey(preset, SwitchKeyKind::SWK_CONJ);
+    ASSERT_NO_THROW(conjkey = keygen.genConjKey(sk));
+    ASSERT_NO_THROW(keygen.genConjKeyInplace(conjkey, sk));
+
+    ASSERT_EQ(conjkey.axSize(), gadget_rank);
+    ASSERT_EQ(conjkey.bxSize(), gadget_rank * num_secret);
+    ASSERT_EQ(conjkey.ax().size(), num_p);
+    ASSERT_EQ(conjkey.bx().size(), num_p);
+}
+
+TEST_P(KeyGen32Test, GenRotationKeys) {
+    const Size rot = dist_u64(gen) % (num_slots - 1) + 1;
+
+    SwitchKey32 left_rotkey(preset, SwitchKeyKind::SWK_ROT, rot);
+    ASSERT_NO_THROW(left_rotkey = keygen.genLeftRotKey(rot, sk));
+    ASSERT_NO_THROW(keygen.genLeftRotKeyInplace(rot, left_rotkey, sk));
+
+    SwitchKey32 right_rotkey(preset, SwitchKeyKind::SWK_ROT, num_slots - rot);
+    ASSERT_NO_THROW(right_rotkey = keygen.genRightRotKey(num_slots - rot, sk));
+    ASSERT_NO_THROW(
+        keygen.genRightRotKeyInplace(num_slots - rot, right_rotkey, sk));
+
+    ASSERT_EQ(left_rotkey.axSize(), gadget_rank);
+    ASSERT_EQ(left_rotkey.bxSize(), gadget_rank * num_secret);
+    ASSERT_EQ(left_rotkey.ax().size(), num_p);
+    ASSERT_EQ(left_rotkey.bx().size(), num_p);
+
+    ASSERT_EQ(right_rotkey.axSize(), gadget_rank);
+    ASSERT_EQ(right_rotkey.bxSize(), gadget_rank * num_secret);
+    ASSERT_EQ(right_rotkey.ax().size(), num_p);
+    ASSERT_EQ(right_rotkey.bx().size(), num_p);
+}
+
+TEST_P(KeyGen32Test, GenAutomorphismKey) {
+    const Size sig = dist_u64(gen) % (degree - 1) + 1;
+    SwitchKey32 autokey(preset, SwitchKeyKind::SWK_AUTO);
+    ASSERT_NO_THROW(autokey = keygen.genAutoKey(sig, sk));
+    ASSERT_NO_THROW(keygen.genAutoKeyInplace(sig, autokey, sk));
+
+    ASSERT_EQ(autokey.axSize(), gadget_rank);
+    ASSERT_EQ(autokey.bxSize(), gadget_rank * num_secret);
+    ASSERT_EQ(autokey.ax().size(), num_p);
+    ASSERT_EQ(autokey.bx().size(), num_p);
+}
+
+TEST_P(KeyGen32Test, GenModPackKey) {
+    if (num_secret != 1) {
+        GTEST_SKIP() << "MODPACK key generation is only for single secret.";
+    }
+    std::vector<SwitchKey32> modkey;
+    ASSERT_NO_THROW(modkey = keygen.genModPackKeyBundle(sk, sk));
+    ASSERT_NO_THROW(keygen.genModPackKeyBundleInplace(sk, sk, modkey));
+}
+
+TEST_P(KeyGen32Test, GenModPackKeySelf) {
+    if (num_secret != 1) {
+        GTEST_SKIP()
+            << "MODPACK_SELF key generation is only for single secret.";
+    }
+    const Size pad_rank = 1U << (dist_u64(gen) % (get_log_degree(preset) / 2));
+    SwitchKey32 modkey(preset, SwitchKeyKind::SWK_MODPACK_SELF);
+    ASSERT_NO_THROW(modkey = keygen.genModPackKeyBundle(pad_rank, sk));
+    ASSERT_NO_THROW(keygen.genModPackKeyBundleInplace(pad_rank, modkey, sk));
+
+    ASSERT_EQ(modkey.axSize(), pad_rank);
+    ASSERT_EQ(modkey.bxSize(), pad_rank * num_secret);
+    ASSERT_EQ(modkey.ax().size(), num_p);
+    ASSERT_EQ(modkey.bx().size(), num_p);
+}
+
+INSTANTIATE_TEST_SUITE_P(Presets, KeyGen32Test,
                          testing::ValuesIn(all_presets32));

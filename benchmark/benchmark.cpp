@@ -23,6 +23,7 @@
 
 #include <chrono>
 #include <iostream>
+#include <optional>
 #include <random>
 #include <vector>
 
@@ -60,7 +61,7 @@ static void bm_seckey_encryption(benchmark::State &state) {
     }
 
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    EncryptorT<T> encryptor;
+    Encryptor encryptor(preset);
     Ciphertext ctxt(preset);
 
     for (auto _ : state) {
@@ -82,7 +83,7 @@ static void bm_enckey_encryption(benchmark::State &state) {
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
     KeyGenerator keygen(preset);
     SwitchKey enckey = keygen.genEncKey(sk);
-    EncryptorT<T> encryptor;
+    Encryptor encryptor(preset);
     Ciphertext ctxt(preset);
 
     for (auto _ : state) {
@@ -101,13 +102,13 @@ template <Preset T> static void bm_decryption(benchmark::State &state) {
     }
 
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    EncryptorT<T> encryptor;
-    DecryptorT<T> decryptor;
+    Encryptor encryptor(preset);
+    Decryptor decryptor(preset);
     Ciphertext ctxt(preset);
     encryptor.encrypt(msg_v, sk, ctxt);
 
     for (auto _ : state) {
-        decryptor.decrypt(ctxt, sk, msg_v);
+        decryptor.decrypt(ctxt, sk, msg_v.data());
         benchmark::DoNotOptimize(msg_v.data());
         benchmark::ClobberMemory();
     }
@@ -122,21 +123,22 @@ template <Preset T> static void bm_decryption_inplace(benchmark::State &state) {
     }
 
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    EncryptorT<T> encryptor;
-    DecryptorT<T> decryptor;
+    Encryptor encryptor(preset);
+    Decryptor decryptor(preset);
     Ciphertext ctxt(preset);
     encryptor.encrypt(msg_v, sk, ctxt);
 
-    std::optional<Ciphertext> ctxt_copy;
+    std::optional<Ciphertext> ctxt_tmp;
     for (auto _ : state) {
         state.PauseTiming();
-        ctxt_copy.emplace(ctxt.deepCopy());
+        ctxt_tmp.emplace(ctxt.deepCopy());
         state.ResumeTiming();
-        decryptor.decryptInplace(ctxt_copy.value(), sk, msg_v.data());
+        decryptor.decryptInplace(ctxt_tmp.value(), sk, msg_v.data());
         benchmark::DoNotOptimize(msg_v.data());
         benchmark::ClobberMemory();
     }
 }
+
 template <Preset T>
 static void bm_seckey_coeff_encryption(benchmark::State &state) {
     const Preset preset = T;
@@ -147,7 +149,7 @@ static void bm_seckey_coeff_encryption(benchmark::State &state) {
     }
 
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    EncryptorT<T> encryptor;
+    Encryptor encryptor(preset);
     Ciphertext ctxt(preset);
 
     for (auto _ : state) {
@@ -168,7 +170,7 @@ static void bm_enckey_coeff_encryption(benchmark::State &state) {
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
     KeyGenerator keygen(preset);
     SwitchKey enckey = keygen.genEncKey(sk);
-    EncryptorT<T> encryptor;
+    Encryptor encryptor(preset);
     Ciphertext ctxt(preset);
 
     for (auto _ : state) {
@@ -187,14 +189,14 @@ static void bm_coeff_decryption(benchmark::State &state) {
         msg_v.push_back(gen_random_coeff(get_degree(preset)));
     }
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    EncryptorT<T> encryptor(preset);
-    DecryptorT<T> decryptor(preset);
+    Encryptor encryptor(preset);
+    Decryptor decryptor(preset);
 
     Ciphertext ctxt(preset);
     encryptor.encrypt(msg_v, sk, ctxt);
 
     for (auto _ : state) {
-        decryptor.decrypt(ctxt, sk, msg_v);
+        decryptor.decrypt(ctxt, sk, msg_v.data());
         benchmark::DoNotOptimize(msg_v.data());
         benchmark::ClobberMemory();
     }
@@ -209,22 +211,23 @@ static void bm_coeff_decryption_inplace(benchmark::State &state) {
         msg_v.push_back(gen_random_coeff(get_degree(preset)));
     }
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    EncryptorT<T> encryptor(preset);
-    DecryptorT<T> decryptor(preset);
+    Encryptor encryptor(preset);
+    Decryptor decryptor(preset);
 
     Ciphertext ctxt(preset);
     encryptor.encrypt(msg_v, sk, ctxt);
 
-    std::optional<Ciphertext> ctxt_copy;
+    std::optional<Ciphertext> ctxt_tmp;
     for (auto _ : state) {
         state.PauseTiming();
-        ctxt_copy.emplace(ctxt.deepCopy());
+        ctxt_tmp.emplace(ctxt.deepCopy());
         state.ResumeTiming();
-        decryptor.decryptInplace(ctxt_copy.value(), sk, msg_v.data());
+        decryptor.decryptInplace(ctxt_tmp.value(), sk, msg_v.data());
         benchmark::DoNotOptimize(msg_v.data());
         benchmark::ClobberMemory();
     }
 }
+
 template <Size degree, u64 prime>
 static void bm_forward_ntt(benchmark::State &state) {
     utils::NTT ntt(degree, prime);

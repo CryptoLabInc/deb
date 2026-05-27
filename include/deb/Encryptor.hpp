@@ -38,6 +38,8 @@ struct EncryptOptions {
     Real scale = 0; /**< Requested plaintext scale (0 = auto). */
     Size level = utils::DEB_MAX_SIZE; /**< Encryption level override. */
     bool ntt_out = true; /**< Whether ciphertext output stays in NTT form. */
+    bool real_encrypt =
+        false; /**< Whether to use the real-encryption method. */
     /**
      * @brief Sets the desired scale value.
      * @param s Requested scale.
@@ -61,8 +63,22 @@ struct EncryptOptions {
      * @param n NTT flag.
      * @return Reference to this for chaining.
      */
+    EncryptOptions &NTTOut(bool n) {
+        ntt_out = n;
+        return *this;
+    }
+    /** [deprecated] */
     EncryptOptions &NttOut(bool n) {
         ntt_out = n;
+        return *this;
+    }
+    /**
+     * @brief Sets whether to use the real-encryption method.
+     * @param r Real-encryption flag.
+     * @return Reference to this for chaining.
+     */
+    EncryptOptions &RealEncrypt(bool r) {
+        real_encrypt = r;
         return *this;
     }
 };
@@ -82,7 +98,7 @@ class EncryptorT : public PresetTraits<P, U> {
 public:
     /**
      * @brief Constructs an encryptor bound to a preset and optional RNG seed.
-     * @param target_preset Target preset.
+     * @param target_preset Target preset. Only specified if P is PRESET_EMPTY.
      * @param seeds Optional deterministic seed.
      */
     explicit EncryptorT(std::optional<const RNGSeed> seeds = std::nullopt);
@@ -173,26 +189,32 @@ public:
      * @param msg Input message object.
      * @param ptxt Output plaintext polynomial.
      * @param size Number of PolyUnitT entries to encode.
-     * @param scale Scaling factor for embedding.
+     * @param opt Encryption options (scale and real_encrypt are required).
      */
     void encode(const MSG &msg, PolynomialT<U> &ptxt, const Size size,
-                const Real scale) const;
+                const EncryptOptions &opt) const;
+
+    void changeNTTRootType(const utils::NTTRootType root_type);
+    utils::NTTRootType getNTTRootType() const;
 
 private:
     /**
      * @brief Samples a zero-one polynomial.
      * @param num_polyunit Number of PolyUnitT entries to sample.
+     * @param ntt_type NTT type to use for the sampled polynomial.
      */
-    void sampleZO(const Size num_polyunit) const;
+    void sampleZO(const Size num_polyunit, const utils::NTTType ntt_type) const;
 
     /**
      * @brief Samples a Gaussian polynomial.
      * @param num_polyunit Number of PolyUnitT entries to sample.
-     * @param do_ntt Whether to apply NTT to the sampled polynomial.
+     * @param ntt_type NTT type to use for the sampled polynomial.
      */
-    void sampleGaussian(const Size num_polyunit, const bool do_ntt) const;
+    void sampleGaussian(const Size num_polyunit,
+                        const utils::NTTType ntt_type) const;
 
     std::shared_ptr<RandomGenerator> rng_;
+
     // compute buffers
     mutable PolynomialT<U> ptxt_buffer_;
     mutable PolynomialT<U> vx_buffer_;
@@ -227,7 +249,7 @@ private:
         const Size size) const;                                                \
     prefix template void EncryptorT<preset, u_type>::encode<msg_t>(            \
         const msg_t &msg, PolynomialT<u_type> &ptxt, const Size size,          \
-        const Real scale) const;
+        const EncryptOptions &opt) const;
 
 #define DECL_ENCRYPT_TEMPLATE(preset, u_type, prefix)                          \
     prefix template class EncryptorT<preset, u_type>;                          \

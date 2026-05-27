@@ -16,12 +16,16 @@
 
 @PACKAGE_INIT@
 
-include("${CMAKE_CURRENT_LIST_DIR}/debTargets.cmake")
-
 include(CMakeFindDependencyMacro)
+
+find_dependency(alea REQUIRED)
+find_dependency(flatbuffers REQUIRED)
 
 set(DEB_BUILD_WITH_OMP @DEB_BUILD_WITH_OMP@)
 if(DEB_BUILD_WITH_OMP)
-  find_dependency(OpenMP REQUIRED COMPONENTS CXX C)
+  find_dependency(OpenMP REQUIRED COMPONENTS CXX)
 endif()
 unset(DEB_BUILD_WITH_OMP)
+
+include("${CMAKE_CURRENT_LIST_DIR}/debTargets.cmake")
+check_required_components(deb)

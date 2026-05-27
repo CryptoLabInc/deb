@@ -31,6 +31,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
+# set(CMAKE_CXX_VISIBILITY_PRESET "default")
 set(CMAKE_VISIBILITY_INLINES_HIDDEN OFF)
 
 set(CMAKE_INSTALL_PREFIX
@@ -113,6 +114,7 @@ set(DEB_SRC
     src/KeyGenerator.cpp
     src/ModArith.cpp
     src/NTT.cpp
+    src/NTTConfig.cpp
     src/OmpUtils.cpp
     src/Preset.cpp
     src/RandomGenerator.cpp

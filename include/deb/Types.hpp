@@ -76,6 +76,7 @@ enum EncodingType {
     UNKNOWN, /**< No encoding context is available. */
     COEFF,   /**< Data is treated as coefficient representation. */
     SLOT,    /**< Data is treated as slot/complex representation. */
+    REAL,    /**< Data is treated as Real-HEAAN representation. */
 };
 
 /**

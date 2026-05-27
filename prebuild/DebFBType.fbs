@@ -33,7 +33,7 @@ table Coeff32 {
 table PolyUnit {
     prime:uint64;
     degree:uint32;
-    ntt_state:bool;
+    ntt_info:int32;
     array:[uint64];
 }
 

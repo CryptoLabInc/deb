@@ -145,8 +145,8 @@ int main() {
         const Size pad_rank = 1U << (get_log_degree(preset) / 2);
         const Size num_p = get_num_p(preset);
         SwitchKey self_modkey(preset, SwitchKeyKind::SWK_MODPACK_SELF);
-        self_modkey.addAx(num_p, pad_rank, true);
-        self_modkey.addBx(num_p, pad_rank * get_num_secret(preset), true);
+        self_modkey.addAx(num_p, pad_rank, utils::NTTType::NEGACYCLIC);
+        self_modkey.addBx(num_p, pad_rank * get_num_secret(preset), utils::NTTType::NEGACYCLIC);
         DebTimer::start("Self ModPack Key Bundle Generation");
         keygen.genModPackKeyBundleInplace(pad_rank, self_modkey, sk); // inplace keygen
         DebTimer::end();

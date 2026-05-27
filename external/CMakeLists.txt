@@ -29,21 +29,23 @@ cpmaddpackage(
   "ALEA_INSTALL ${DEB_INSTALL_ALEA}"
   "BUILD_SHARED_LIBS ${BUILD_SHARED_LIBS}")
 
-cpmaddpackage(
-  NAME
-  flatbuffers
-  GITHUB_REPOSITORY
-  google/flatbuffers
-  GIT_TAG
-  v25.2.10
-  OPTIONS
-  "FLATBUFFERS_BUILD_TESTS OFF"
-  "FLATBUFFERS_INSTALL ${DEB_INSTALL_FLATBUFFERS}"
-  "FLATBUFFERS_BUILD_SHAREDLIB ${BUILD_SHARED_LIBS}")
+if(DEB_SERIALIZE_API)
+  cpmaddpackage(
+    NAME
+    flatbuffers
+    GITHUB_REPOSITORY
+    google/flatbuffers
+    GIT_TAG
+    v25.2.10
+    OPTIONS
+    "FLATBUFFERS_BUILD_TESTS OFF"
+    "FLATBUFFERS_INSTALL ${DEB_INSTALL_FLATBUFFERS}"
+    "FLATBUFFERS_BUILD_SHAREDLIB ${BUILD_SHARED_LIBS}")
 
-set(flatbuffers_SOURCE_DIR
-    ${flatbuffers_SOURCE_DIR}
-    CACHE PATH "" FORCE)
+  set(flatbuffers_SOURCE_DIR
+      ${flatbuffers_SOURCE_DIR}
+      CACHE PATH "" FORCE)
+endif()
 
 string(TOUPPER "${DEB_EXT_LIB_FOR_SECURE_ZERO}" _deb_secure_zero_backend)
 
