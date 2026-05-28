@@ -24,12 +24,11 @@
 #include <gtest/gtest.h>
 
 using namespace deb;
-using namespace std;
 
 class NTTTest : public ::testing::TestWithParam<std::tuple<u64, u64>> {
 public:
-    const u64 degree{get<0>(GetParam())};
-    const u64 prime{get<1>(GetParam())};
+    const u64 degree{std::get<0>(GetParam())};
+    const u64 prime{std::get<1>(GetParam())};
 
     std::random_device rd;
     std::mt19937 gen{rd()};
@@ -226,13 +225,13 @@ INSTANTIATE_TEST_SUITE_P(CustomModeTiny, NTTTest,
 
 class CyclicNTTTest : public ::testing::TestWithParam<std::tuple<u64, u64>> {
 public:
-    const u64 degree{get<0>(GetParam())};
-    const u64 prime{get<1>(GetParam())};
+    const u64 degree{std::get<0>(GetParam())};
+    const u64 prime{std::get<1>(GetParam())};
     std::mt19937_64 gen{std::random_device{}()};
 
-    vector<u64> random_vec() {
-        vector<u64> v(degree);
-        uniform_int_distribution<u64> dist(0, prime - 1);
+    std::vector<u64> random_vec() {
+        std::vector<u64> v(degree);
+        std::uniform_int_distribution<u64> dist(0, prime - 1);
         for (auto &x : v)
             x = dist(gen);
         return v;
@@ -265,10 +264,10 @@ TEST_P(CyclicNTTTest, ForwardOfConstantOne) {
     // ends up evaluating f(x) = 1 at every N-th root of unity — every bin is 1.
     utils::NTT_C ntt{degree, prime};
 
-    vector<u64> op(degree, 0);
+    std::vector<u64> op(degree, 0);
     op[0] = 1;
     ntt.computeForward(op.data());
-    EXPECT_EQ(op, vector<u64>(degree, 1));
+    EXPECT_EQ(op, std::vector<u64>(degree, 1));
 }
 
 TEST_P(CyclicNTTTest, DirectRoundTrip) {
@@ -308,10 +307,10 @@ constexpr u64 kSmallDegree = 64;
 constexpr u64 kSmallPrime = 4295688193ULL;
 
 // Naive negacyclic convolution: c = a * b mod (X^N + 1) mod p.
-vector<u64> negacyclicConv(const vector<u64> &a, const vector<u64> &b,
-                           u64 prime) {
+std::vector<u64> negacyclicConv(const std::vector<u64> &a,
+                                const std::vector<u64> &b, u64 prime) {
     const u64 N = a.size();
-    vector<u64> c(N, 0);
+    std::vector<u64> c(N, 0);
     for (u64 i = 0; i < N; i++) {
         for (u64 j = 0; j < N; j++) {
             u64 prod = utils::mulModSimple(a[i], b[j], prime);
@@ -344,7 +343,7 @@ TEST(CyclicNTTPolyMul, AllModesAgreeOnPointwiseProduct) {
     constexpr u64 p = kSmallPrime;
 
     std::mt19937_64 rng(0xcafe1234);
-    vector<u64> a(N), b(N);
+    std::vector<u64> a(N), b(N);
     for (auto &x : a)
         x = rng() % p;
     for (auto &x : b)
@@ -352,7 +351,7 @@ TEST(CyclicNTTPolyMul, AllModesAgreeOnPointwiseProduct) {
 
     auto nttMul = [&](utils::NTTRootType rt) {
         utils::NTT_C ntt{N, p, rt};
-        vector<u64> fa(a), fb(b), fc(N);
+        std::vector<u64> fa(a), fb(b), fc(N);
         ntt.computeForward(fa.data());
         ntt.computeForward(fb.data());
         for (u64 i = 0; i < N; i++)
@@ -382,7 +381,7 @@ TEST(CyclicNTTPolyMul, CyclicDiffersFromNegacyclic) {
     constexpr u64 p = kSmallPrime;
 
     std::mt19937_64 rng(0xdead5678);
-    vector<u64> a(N), b(N);
+    std::vector<u64> a(N), b(N);
     for (auto &x : a)
         x = rng() % p;
     for (auto &x : b)
@@ -390,7 +389,7 @@ TEST(CyclicNTTPolyMul, CyclicDiffersFromNegacyclic) {
 
     auto cycMul = [&]() {
         utils::NTT_C ntt{N, p};
-        vector<u64> fa(a), fb(b), fc(N);
+        std::vector<u64> fa(a), fb(b), fc(N);
         ntt.computeForward(fa.data());
         ntt.computeForward(fb.data());
         for (u64 i = 0; i < N; i++)
@@ -400,7 +399,7 @@ TEST(CyclicNTTPolyMul, CyclicDiffersFromNegacyclic) {
     };
     auto negMul = [&]() {
         utils::NTT ntt{N, p};
-        vector<u64> fa(a), fb(b), fc(N);
+        std::vector<u64> fa(a), fb(b), fc(N);
         ntt.computeForward(fa.data());
         ntt.computeForward(fb.data());
         for (u64 i = 0; i < N; i++)
@@ -486,7 +485,7 @@ TEST(NTTPolyMul, AllModesAgreeOnNegacyclicConvolution) {
     constexpr u64 p = kSmallPrime;
 
     std::mt19937_64 rng(0xdeb1cafe);
-    vector<u64> a(N), b(N);
+    std::vector<u64> a(N), b(N);
     for (auto &x : a)
         x = rng() % p;
     for (auto &x : b)
@@ -498,7 +497,7 @@ TEST(NTTPolyMul, AllModesAgreeOnNegacyclicConvolution) {
     auto nttConv = [&](utils::NTTRootType rt) {
         utils::ScopedNTTRootType guard{rt};
         utils::NTT ntt{N, p};
-        vector<u64> fa(a), fb(b), fc(N);
+        std::vector<u64> fa(a), fb(b), fc(N);
         ntt.computeForward(fa.data());
         ntt.computeForward(fb.data());
         for (u64 i = 0; i < N; i++)
@@ -524,7 +523,7 @@ TEST(NTTPolyMul, AllModesAgreeOn40bitPrime) {
         2199020634113ULL; // 40-bit NTT prime (degree 8192-friendly)
 
     std::mt19937_64 rng(0xcafe0123);
-    vector<u64> a(N), b(N);
+    std::vector<u64> a(N), b(N);
     for (auto &x : a)
         x = rng() % p;
     for (auto &x : b)
@@ -535,7 +534,7 @@ TEST(NTTPolyMul, AllModesAgreeOn40bitPrime) {
     auto nttConv = [&](utils::NTTRootType rt) {
         utils::ScopedNTTRootType guard{rt};
         utils::NTT ntt{N, p};
-        vector<u64> fa(a), fb(b), fc(N);
+        std::vector<u64> fa(a), fb(b), fc(N);
         ntt.computeForward(fa.data());
         ntt.computeForward(fb.data());
         for (u64 i = 0; i < N; i++)
@@ -560,7 +559,7 @@ TEST(NTTReregistration, RoundtripAfterPsiOverwrite) {
     constexpr u64 p = kSmallPrime;
 
     // Collect two distinct valid psi values using different bases.
-    vector<u64> valid_psi;
+    std::vector<u64> valid_psi;
     for (u64 base : {u64(3), u64(5), u64(7), u64(11), u64(13), u64(17)}) {
         u64 candidate = utils::powModSimple(base, (p - 1) / (2 * N), p);
         if (candidate != 1 && utils::powModSimple(candidate, N, p) != 1) {
@@ -590,10 +589,10 @@ TEST(NTTReregistration, RoundtripAfterPsiOverwrite) {
     utils::NTT ntt{N, p};
 
     std::mt19937_64 rng(0xbeef);
-    vector<u64> v(N);
+    std::vector<u64> v(N);
     for (auto &x : v)
         x = rng() % p;
-    vector<u64> result(v);
+    std::vector<u64> result(v);
     ntt.computeForward(result.data());
     ntt.computeBackward(result.data());
 
@@ -825,7 +824,7 @@ TEST(NTTRootTypeAlgo, DirectAndMinUseDifferentPsiForTypicalPrime) {
     auto getPsiFromNTT = [&](utils::NTTRootType rt) {
         utils::ScopedNTTRootType guard{rt};
         utils::NTT ntt{N, p};
-        vector<u64> e1(N, 0);
+        std::vector<u64> e1(N, 0);
         e1[1] = 1;
         ntt.computeForward(e1.data());
         // e1 after forward NTT: e1[i] = psi^(bit_reverse(i)) in some ordering.

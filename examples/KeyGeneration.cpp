@@ -16,7 +16,6 @@
 
 #include "ExampleUtils.hpp"
 
-using namespace std;
 using namespace deb;
 
 int main() {

@@ -17,7 +17,6 @@
 #include "ExampleUtils.hpp"
 
 #include <random>
-using namespace std;
 using namespace deb;
 
 namespace {

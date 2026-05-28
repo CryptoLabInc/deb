@@ -20,7 +20,6 @@
 #include <filesystem>
 #include <fstream>
 
-using namespace std;
 using namespace deb;
 
 int main() {
@@ -51,14 +50,14 @@ int main() {
         Ciphertext cipher(preset);
         encryptor.encrypt(msg, enckey, cipher);
 
-        ofstream of(tmp_dir + "serialize_example1.bin", ios::binary);
+        std::ofstream of(tmp_dir + "serialize_example1.bin", std::ios::binary);
         serializeToStream(msg, of);
         serializeToStream(sk, of);
         serializeToStream(enckey, of);
         serializeToStream(cipher, of);
         of.close();
 
-        ifstream inf(tmp_dir + "serialize_example1.bin", ios::binary);
+        std::ifstream inf(tmp_dir + "serialize_example1.bin", std::ios::binary);
         Message msg2(preset);
         SecretKey sk2(preset);
         SwitchKey enckey2(preset, SWK_ENC);
