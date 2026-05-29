@@ -51,7 +51,7 @@ if(DEB_SUPPORT_U64)
   target_link_libraries(KeyGen-test PRIVATE ${deb_test})
   add_gtest_target_to_ctest(KeyGen-test)
 
-  # Ntt Test
+  # NTT Test
   add_executable(NTT-test NTT-test.cpp)
   target_link_libraries(NTT-test PRIVATE ${deb_test})
   add_gtest_target_to_ctest(NTT-test)

@@ -15,31 +15,58 @@
  */
 
 #include "CKKSTypes.hpp"
+#include "utils/NTT.hpp"
 
 #include <cstdlib>
+
 #if defined(_WIN32)
 #include <malloc.h>
 #endif
 
-namespace deb {
-
-#if DEB_ALINAS_LEN != 0
-inline void *deb_aligned_alloc(size_t alignment, size_t size) {
-#if defined(_WIN32)
-    return _aligned_malloc(size, alignment);
+namespace {
+inline std::size_t align_up(std::size_t size) {
+#if DEB_ALINAS_LEN == 0
+    return size;
 #else
-    return std::aligned_alloc(alignment, size);
+    return (size + DEB_ALINAS_LEN - 1) & ~(DEB_ALINAS_LEN - 1);
 #endif
 }
 
-inline void deb_aligned_free(void *ptr) {
+inline void *deb_malloc(const std::size_t bytes) {
+    if (bytes == 0) {
+        return nullptr;
+    }
+#if DEB_ALINAS_LEN == 0
+    return std::malloc(bytes);
+#else
 #if defined(_WIN32)
+    return _aligned_malloc(bytes, DEB_ALINAS_LEN);
+#else
+    return std::aligned_alloc(DEB_ALINAS_LEN, align_up(bytes));
+#endif
+#endif
+}
+
+inline void deb_free(void *ptr) {
+    if (ptr == nullptr) {
+        return;
+    }
+#if DEB_ALINAS_LEN != 0 && defined(_WIN32)
     _aligned_free(ptr);
 #else
     std::free(ptr);
 #endif
+    return;
 }
-#endif
+
+template <typename U>
+inline std::shared_ptr<U[]> make_aligned_shared_array(std::size_t size) {
+    return std::shared_ptr<U[]>(static_cast<U *>(deb_malloc(sizeof(U) * size)),
+                                [](U *p) { deb_free(p); });
+}
+} // namespace
+
+namespace deb {
 
 //// ---------------------------------------------------------------------
 //// Implementation of Message
@@ -83,39 +110,28 @@ MESSAGE_TYPE_TEMPLATE()
 // ---------------------------------------------------------------------
 template <typename U>
 PolyUnitT<U>::PolyUnitT(const Preset preset, const Size level, const bool alloc)
-    : prime_(static_cast<U>(get_primes(preset)[level])), ntt_state_(false),
+    : prime_(static_cast<U>(get_primes(preset)[level])),
+      ntt_type_(utils::NTTType::NONNTT),
+      ntt_root_type_(utils::getGlobalNTTRootType()),
       degree_(get_degree(preset)) {
     if (!alloc) {
         data_ptr_ = nullptr;
         degree_ = 0;
         return;
     }
-#if DEB_ALINAS_LEN == 0
-    data_ptr_ =
-        std::shared_ptr<U[]>(new U[degree_], std::default_delete<U[]>());
-#else
-    auto *buf = static_cast<U *>(
-        deb_aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * degree_));
-    data_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) { deb_aligned_free(p); });
-#endif
+    data_ptr_ = make_aligned_shared_array<U>(degree_);
 }
 
 template <typename U>
 PolyUnitT<U>::PolyUnitT(u64 prime, Size degree, const bool alloc)
-    : prime_(static_cast<U>(prime)), ntt_state_(false), degree_(degree) {
+    : prime_(static_cast<U>(prime)), ntt_type_(utils::NTTType::NONNTT),
+      ntt_root_type_(utils::getGlobalNTTRootType()), degree_(degree) {
     if (!alloc) {
         data_ptr_ = nullptr;
         degree_ = 0;
         return;
     }
-#if DEB_ALINAS_LEN == 0
-    data_ptr_ =
-        std::shared_ptr<U[]>(new U[degree_], std::default_delete<U[]>());
-#else
-    auto *buf = static_cast<U *>(
-        deb_aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * degree_));
-    data_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) { deb_aligned_free(p); });
-#endif
+    data_ptr_ = make_aligned_shared_array<U>(degree_);
 }
 
 template <typename U> PolyUnitT<U> PolyUnitT<U>::deepCopy() const {
@@ -126,7 +142,8 @@ template <typename U> PolyUnitT<U> PolyUnitT<U>::deepCopy() const {
             copy[i] = (*this)[i];
         }
     }
-    copy.setNTT(ntt_state_);
+    copy.ntt_type_ = ntt_type_;
+    copy.ntt_root_type_ = ntt_root_type_;
     return copy;
 }
 
@@ -136,12 +153,24 @@ template <typename U> void PolyUnitT<U>::setPrime(u64 prime) noexcept {
 
 template <typename U> U PolyUnitT<U>::prime() const noexcept { return prime_; }
 
-template <typename U> void PolyUnitT<U>::setNTT(bool ntt_state) noexcept {
-    ntt_state_ = ntt_state;
+template <typename U>
+void PolyUnitT<U>::setNTT(const utils::NTTType ntt_type,
+                          const utils::NTTRootType root_type) noexcept {
+    ntt_type_ = ntt_type;
+    ntt_root_type_ = root_type;
 }
 
 template <typename U> bool PolyUnitT<U>::isNTT() const noexcept {
-    return ntt_state_;
+    return ntt_type_ != utils::NTTType::NONNTT;
+}
+
+template <typename U> utils::NTTType PolyUnitT<U>::getNTTType() const noexcept {
+    return ntt_type_;
+}
+
+template <typename U>
+utils::NTTRootType PolyUnitT<U>::getNTTRootType() const noexcept {
+    return ntt_root_type_;
 }
 
 template <typename U> Size PolyUnitT<U>::degree() const noexcept {
@@ -163,14 +192,7 @@ PolynomialT<U>::PolynomialT(const Preset preset, const bool full_level) {
     const Size degree = get_degree(preset);
     const Size num_poly =
         full_level ? get_num_p(preset) : get_encryption_level(preset) + 1;
-#if DEB_ALINAS_LEN == 0
-    dealloc_ptr_ = std::shared_ptr<U[]>(new U[num_poly * degree],
-                                        std::default_delete<U[]>());
-#else
-    auto *buf = static_cast<U *>(
-        deb_aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * num_poly * degree));
-    dealloc_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) { deb_aligned_free(p); });
-#endif
+    dealloc_ptr_ = make_aligned_shared_array<U>(num_poly * degree);
     for (Size l = 0; l < num_poly; ++l) {
         polyunits_.emplace_back(preset, l, false);
         polyunits_[l].setData(dealloc_ptr_.get() + l * degree, degree);
@@ -180,14 +202,7 @@ PolynomialT<U>::PolynomialT(const Preset preset, const bool full_level) {
 template <typename U>
 PolynomialT<U>::PolynomialT(const Preset preset, const Size custom_size) {
     const Size degree = get_degree(preset);
-#if DEB_ALINAS_LEN == 0
-    dealloc_ptr_ = std::shared_ptr<U[]>(new U[custom_size * degree],
-                                        std::default_delete<U[]>());
-#else
-    auto *buf = static_cast<U *>(
-        deb_aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * custom_size * degree));
-    dealloc_ptr_ = std::shared_ptr<U[]>(buf, [](U *p) { deb_aligned_free(p); });
-#endif
+    dealloc_ptr_ = make_aligned_shared_array<U>(custom_size * degree);
     for (Size l = 0; l < custom_size; ++l) {
         polyunits_.emplace_back(preset, l, false);
         polyunits_[l].setData(dealloc_ptr_.get() + l * degree, degree);
@@ -211,21 +226,15 @@ PolynomialT<U>::deepCopy(std::optional<Size> num_polyunit) const {
     PolynomialT<U> copy(*this, 0, 0);
     copy.polyunits_.clear();
     if (dealloc_ptr_ != nullptr) {
-#if DEB_ALINAS_LEN == 0
-        copy.dealloc_ptr_ = std::shared_ptr<U[]>(
-            new U[num_polyunit_val * polyunits_[0].degree()],
-            std::default_delete<U[]>());
-#else
-        auto *buf = static_cast<U *>(
-            deb_aligned_alloc(DEB_ALINAS_LEN, sizeof(U) * num_polyunit_val *
-                                                  polyunits_[0].degree()));
-        copy.dealloc_ptr_ =
-            std::shared_ptr<U[]>(buf, [](U *p) { deb_aligned_free(p); });
-#endif
+        copy.dealloc_ptr_ = make_aligned_shared_array<U>(
+            num_polyunit_val * polyunits_[0].degree());
         for (Size i = 0; i < num_polyunit_val; ++i) {
             copy.polyunits_.emplace_back(polyunits_[i].prime(),
                                          polyunits_[i].degree(), true);
-            copy.polyunits_[i].setNTT(polyunits_[i].isNTT());
+            if (polyunits_[i].isNTT()) {
+                copy.polyunits_[i].setNTT(polyunits_[i].getNTTType(),
+                                          polyunits_[i].getNTTRootType());
+            }
             copy.polyunits_[i].setData(copy.dealloc_ptr_.get() +
                                            i * polyunits_[i].degree(),
                                        polyunits_[i].degree());
@@ -242,10 +251,11 @@ PolynomialT<U>::deepCopy(std::optional<Size> num_polyunit) const {
     return copy;
 }
 
-template <typename U> void PolynomialT<U>::setNTT(bool ntt_state) noexcept {
-    for (auto &poly : polyunits_) {
-        poly.setNTT(ntt_state);
-    }
+template <typename U>
+void PolynomialT<U>::setNTT(const utils::NTTType ntt_type,
+                            const utils::NTTRootType root_type) noexcept {
+    for (auto &poly : polyunits_)
+        poly.setNTT(ntt_type, root_type);
 }
 
 template <typename U> void PolynomialT<U>::setLevel(Preset preset, Size level) {
@@ -331,9 +341,11 @@ template <typename U> bool CiphertextT<U>::isCoeff() const noexcept {
     return encoding_ == COEFF;
 }
 
-template <typename U> void CiphertextT<U>::setNTT(bool ntt_state) {
+template <typename U>
+void CiphertextT<U>::setNTT(const utils::NTTType ntt_type,
+                            const utils::NTTRootType root_type) noexcept {
     for (auto &poly : polys_) {
-        poly.setNTT(ntt_state);
+        poly.setNTT(ntt_type, root_type);
     }
 }
 
@@ -480,15 +492,17 @@ void SecretKeyT<U>::allocPolys(std::optional<Size> num_polyunit) {
 // ---------------------------------------------------------------------
 template <typename U>
 SwitchKeyT<U>::SwitchKeyT(Preset preset, const SwitchKeyKind type,
-                          const std::optional<Size> rot_idx)
+                          const std::optional<Size> rot_idx,
+                          const utils::NTTType ntt_type)
     : preset_(preset), type_(type), rot_idx_(rot_idx),
       dnum_(get_gadget_rank(preset)) {
     if (type_ == SWK_MODPACK_SELF || type_ == SWK_GENERIC) {
         return;
     }
     const Size size = (type_ == SWK_ENC) ? 1 : dnum_;
-    addAx(get_num_p(preset), size, true);
-    addBx(get_num_p(preset), size * get_num_secret(preset), true);
+    addAx(get_num_p(preset), size, ntt_type, utils::getGlobalNTTRootType());
+    addBx(get_num_p(preset), size * get_num_secret(preset), ntt_type,
+          utils::getGlobalNTTRootType());
 }
 
 template <typename U> Preset SwitchKeyT<U>::preset() const noexcept {
@@ -520,12 +534,13 @@ template <typename U> Size SwitchKeyT<U>::dnum() const noexcept {
 
 template <typename U>
 void SwitchKeyT<U>::addAx(const Size num_polyunit, std::optional<Size> size,
-                          const bool ntt_state) {
+                          const utils::NTTType ntt_type,
+                          const utils::NTTRootType root_type) {
     const auto num_poly = size.value_or(1);
     for (Size i = 0; i < num_poly; ++i) {
         ax_.emplace_back(preset_, num_polyunit);
     }
-    setAxNTT(ntt_state);
+    setAxNTT(ntt_type, root_type);
 }
 
 template <typename U> void SwitchKeyT<U>::addAx(const PolynomialT<U> &poly) {
@@ -534,27 +549,32 @@ template <typename U> void SwitchKeyT<U>::addAx(const PolynomialT<U> &poly) {
 
 template <typename U>
 void SwitchKeyT<U>::addBx(const Size num_polyunit, std::optional<Size> size,
-                          const bool ntt_state) {
+                          const utils::NTTType ntt_type,
+                          const utils::NTTRootType root_type) {
     const auto num_poly = size.value_or(dnum_ * get_num_secret(preset_));
     for (Size i = 0; i < num_poly; ++i) {
         bx_.emplace_back(preset_, num_polyunit);
     }
-    setBxNTT(ntt_state);
+    setBxNTT(ntt_type, root_type);
 }
 
 template <typename U> void SwitchKeyT<U>::addBx(const PolynomialT<U> &poly) {
     bx_.push_back(poly);
 }
 
-template <typename U> void SwitchKeyT<U>::setAxNTT(bool ntt_state) noexcept {
+template <typename U>
+void SwitchKeyT<U>::setAxNTT(const utils::NTTType ntt_type,
+                             const utils::NTTRootType root_type) noexcept {
     for (auto &poly : ax_) {
-        poly.setNTT(ntt_state);
+        poly.setNTT(ntt_type, root_type);
     }
 }
 
-template <typename U> void SwitchKeyT<U>::setBxNTT(bool ntt_state) noexcept {
+template <typename U>
+void SwitchKeyT<U>::setBxNTT(const utils::NTTType ntt_type,
+                             const utils::NTTRootType root_type) noexcept {
     for (auto &poly : bx_) {
-        poly.setNTT(ntt_state);
+        poly.setNTT(ntt_type, root_type);
     }
 }
 

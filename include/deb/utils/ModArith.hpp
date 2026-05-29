@@ -23,6 +23,7 @@
 
 #include <algorithm>
 #include <memory>
+#include <mutex>
 
 namespace deb::utils {
 
@@ -57,16 +58,61 @@ public:
      * The prime is accepted as u64 for compatibility with preset tables; it is
      * narrowed to U internally.
      *
+     * @param degree Polynomial degree.
      * @param prime Prime modulus (must fit in U for correctness).
+     * @param default_ntt_is_cyclic Whether the default NTT should be cyclic.
      */
-    explicit ModArith(u64 prime);
-    explicit ModArith(Size degree, u64 prime);
+    explicit ModArith(u64 prime, bool default_ntt_is_cyclic = false);
+    explicit ModArith(Size degree, u64 prime,
+                      bool default_ntt_is_cyclic = false);
 
     /**
      * @brief Returns the modulus associated with this instance.
      */
     inline U getPrime() const { return prime_; }
 
+    // Returns the negacyclic NTT or the cyclic NTT.
+    // The cyclic-true path requires the stored prime to be
+    // 4N-friendly; the negacyclic path requires 2N-friendly.
+    inline std::shared_ptr<NTT_base<U>> getNTT(const NTTType ntt_type) const {
+        if (ntt_type == NTTType::CYCLIC) {
+            ensureCyclicNTT();
+            return cyclic_ntt_;
+        } else if (ntt_type == NTTType::NEGACYCLIC) {
+            ensureNegacyclicNTT();
+            return ntt_;
+        } else {
+            throw std::runtime_error("[ModArith::getNTT] Unsupported NTT type");
+        }
+    };
+
+    /**
+     * @brief Returns the NTT root-finding algorithm this ModArith uses
+     *        when constructing its NTT objects.
+     */
+    inline NTTRootType getNTTRootType() const noexcept { return root_type_; }
+
+    /**
+     * @brief Sets a per-instance NTT root-finding algorithm override.
+     *
+     * If the root type is changed from the current value, any existing NTT
+     * objects are discarded and will be rebuilt. This allows different ModArith
+     * instances to use different root-finding algorithms and/or custom roots at
+     * runtime.
+     */
+    void setNTTRootType(NTTRootType rt = getGlobalNTTRootType()) {
+        if (root_type_ != rt) {
+            root_type_ = rt;
+            if (ntt_) {
+                ntt_.reset();
+                ensureNegacyclicNTT(); // Rebuild with new root type.
+            }
+            if (cyclic_ntt_) {
+                cyclic_ntt_.reset();
+                ensureCyclicNTT(); // Rebuild with new root type.
+            }
+        }
+    }
     /**
      * @brief Returns the precomputed Barrett ratio floor(2^64 / prime).
      *
@@ -224,30 +270,42 @@ public:
     /**
      * @brief Applies the forward NTT, copying data when op and res differ.
      */
-    inline void forwardNTT(U *op, U *res) const {
+    inline void forwardNTT(U *op, U *res,
+                           const NTTType ntt_type = NTTType::NEGACYCLIC) const {
         if (op != res)
             std::copy_n(op, default_array_size_, res);
-        forwardNTT(res);
+        forwardNTT(res, ntt_type);
     }
 
     /**
-     * @brief Applies the forward NTT in-place.
+     * @brief Applies the forward NTT in-place.  When @p cyclic is true the
+     * cyclic NTT object is constructed on first use; this requires the
+     * stored prime to be 4N-friendly.
      */
-    inline void forwardNTT(U *op) const { ntt_->computeForward(op); }
+    inline void forwardNTT(U *op,
+                           const NTTType ntt_type = NTTType::NEGACYCLIC) const {
+        getNTT(ntt_type)->computeForward(op);
+    }
 
     /**
      * @brief Applies the inverse NTT, copying data when op and res differ.
      */
-    inline void backwardNTT(U *op, U *res) const {
+    inline void
+    backwardNTT(U *op, U *res,
+                const NTTType ntt_type = NTTType::NEGACYCLIC) const {
         if (op != res)
             std::copy_n(op, default_array_size_, res);
-        backwardNTT(res);
+        backwardNTT(res, ntt_type);
     }
 
     /**
-     * @brief Applies the inverse NTT in-place.
+     * @brief Applies the inverse NTT in-place.  See forwardNTT for the
+     * lazy-construction note on @p cyclic.
      */
-    inline void backwardNTT(U *op) const { ntt_->computeBackward(op); }
+    inline void
+    backwardNTT(U *op, const NTTType ntt_type = NTTType::NEGACYCLIC) const {
+        getNTT(ntt_type)->computeBackward(op);
+    }
 
     /**
      * @brief Returns the default vector size configured for this instance.
@@ -280,7 +338,37 @@ private:
     u64 two_to_64_;       // 2^64 mod prime
     u64 two_to_64_shoup_; // floor(two_to_64 * 2^64 / prime)
 
-    std::shared_ptr<NTT<U>> ntt_ = nullptr;
+    // Per-instance root_type override.
+    NTTRootType root_type_;
+
+    // Both NTT objects are built lazily on first use. This lets ModArith
+    // instances constructed for primes that satisfy only one of the
+    // congruence requirements (2N-friendly vs 4N-friendly) survive
+    // construction; the mismatched mode only fails when it is actually
+    // accessed. Construction tables (~degree-sized vectors) are also a
+    // non-trivial cost, so deferring them helps when the caller never
+    // exercises one of the modes.
+    //
+    // Held by base-class pointer so a user-registered NTTFactory<U> can
+    // return any subclass (custom NTT backend) and still slot into both
+    // negacyclic and cyclic accessor paths.
+    mutable std::shared_ptr<NTT_base<U>> ntt_ = nullptr;
+    mutable std::shared_ptr<NTT_base<U>> cyclic_ntt_ = nullptr;
+
+    void ensureNegacyclicNTT() const {
+        if (!ntt_) {
+            ntt_ = createNTT<U>(default_array_size_, static_cast<u64>(prime_),
+                                NTTType::NEGACYCLIC, getNTTRootType());
+        }
+    }
+
+    void ensureCyclicNTT() const {
+        if (!cyclic_ntt_) {
+            cyclic_ntt_ =
+                createNTT<U>(default_array_size_, static_cast<u64>(prime_),
+                             NTTType::CYCLIC, getNTTRootType());
+        }
+    }
 };
 
 /**
@@ -289,6 +377,7 @@ private:
 template <Size D, typename U = u64>
 void forwardNTT(const std::vector<ModArith<D, U>> &modarith,
                 PolynomialT<U> &poly, Size num_polyunit = 0,
+                NTTType ntt_type = utils::NTTType::NEGACYCLIC,
                 [[maybe_unused]] bool expected_ntt_state = false);
 
 /**
@@ -297,6 +386,7 @@ void forwardNTT(const std::vector<ModArith<D, U>> &modarith,
 template <Size D, typename U = u64>
 void backwardNTT(const std::vector<ModArith<D, U>> &modarith,
                  PolynomialT<U> &poly, Size num_polyunit = 0,
+                 NTTType ntt_type = utils::NTTType::NEGACYCLIC,
                  [[maybe_unused]] bool expected_ntt_state = true);
 
 /**
@@ -349,10 +439,10 @@ void constMulPoly(const std::vector<ModArith<D, U>> &modarith,
     prefix template class ModArith<degree, u_type>;                            \
     prefix template void forwardNTT(                                           \
         const std::vector<ModArith<degree, u_type>> &, PolynomialT<u_type> &,  \
-        Size, bool);                                                           \
+        Size, NTTType, bool);                                                  \
     prefix template void backwardNTT(                                          \
         const std::vector<ModArith<degree, u_type>> &, PolynomialT<u_type> &,  \
-        Size, bool);                                                           \
+        Size, NTTType, bool);                                                  \
     prefix template void addPoly(                                              \
         const std::vector<ModArith<degree, u_type>> &,                         \
         const PolynomialT<u_type> &, const PolynomialT<u_type> &,              \

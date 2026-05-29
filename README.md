@@ -53,10 +53,6 @@ cmake --build build --target install
 - `DEB_INSTALL_ALEA`: Install the alea library when installing deb. (default: OFF)
 - `DEB_INSTALL_FLATBUFFERS`: Install the flatbuffers library when installing deb. (default: OFF)
 - `DEB_RUNTIME_RESOURCE_CHECK`: Enable runtime resource check. (default: ON)
-- `DEB_SERIALIZE_API`: Download FlatBuffers and enable serialization api. (default: ON)
-- `DEB_SUPPORT_U64`: Compile u64 coefficient word type support. (default: ON)
-- `DEB_SUPPORT_U32`: Compile u32 coefficient word type support. (default: OFF)
-
 
 ## Testing
 

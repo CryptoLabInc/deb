@@ -18,6 +18,7 @@
 
 #include "Preset.hpp"
 #include "SeedGenerator.hpp"
+#include "utils/NTTConfig.hpp"
 
 #include <algorithm>
 #include <complex>
@@ -193,13 +194,26 @@ public:
      */
     U prime() const noexcept;
     /**
-     * @brief Marks the coefficient representation as NTT or standard domain.
+     * @brief Marks the coefficient representation as NTT, recording both the
+     * cyclic kind and the root-finding algorithm used.
      */
-    void setNTT(bool ntt_state) noexcept;
+    void setNTT(const utils::NTTType ntt_type,
+                const utils::NTTRootType root_type =
+                    utils::getGlobalNTTRootType()) noexcept;
     /**
      * @brief Returns true if the unit is in NTT domain.
      */
     bool isNTT() const noexcept;
+    /**
+     * @brief Returns the NTT type (NEGACYCLIC or CYCLIC). Meaningful only when
+     * isNTT() is true.
+     */
+    utils::NTTType getNTTType() const noexcept;
+    /**
+     * @brief Returns the root-finding algorithm used when the NTT was applied.
+     * Meaningful only when isNTT() is true.
+     */
+    utils::NTTRootType getNTTRootType() const noexcept;
     /**
      * @brief Number of coefficients available in this unit.
      */
@@ -223,7 +237,10 @@ public:
 
 private:
     U prime_;
-    bool ntt_state_;
+    // NTTType: NONNTT, NEGACYCLIC, CYCLIC
+    utils::NTTType ntt_type_;
+    // NTTRootType: MIN, DIRECT, CUSTOM
+    utils::NTTRootType ntt_root_type_;
     Size degree_;
     std::shared_ptr<U[]> data_ptr_;
 };
@@ -261,9 +278,12 @@ public:
     PolynomialT<U>
     deepCopy(std::optional<Size> num_polyunit = std::nullopt) const;
     /**
-     * @brief Marks every unit as NTT or standard domain.
+     * @brief Marks every unit as NTT, recording the cyclic kind and root
+     * algorithm.
      */
-    void setNTT(bool ntt_state) noexcept;
+    void setNTT(const utils::NTTType ntt_type,
+                const utils::NTTRootType root_type =
+                    utils::getGlobalNTTRootType()) noexcept;
     /**
      * @brief Updates current level metadata.
      */
@@ -369,7 +389,9 @@ public:
     /**
      * @brief Sets NTT state for every polynomial.
      */
-    void setNTT(bool ntt_state);
+    void setNTT(const utils::NTTType ntt_type,
+                const utils::NTTRootType root_type =
+                    utils::getGlobalNTTRootType()) noexcept;
     /**
      * @brief Updates level metadata.
      */
@@ -478,8 +500,10 @@ private:
 template <typename U = u64> class SwitchKeyT {
 public:
     SwitchKeyT() = delete;
-    explicit SwitchKeyT(Preset preset, const SwitchKeyKind type,
-                        const std::optional<Size> rot_idx = std::nullopt);
+    explicit SwitchKeyT(
+        Preset preset, const SwitchKeyKind type,
+        const std::optional<Size> rot_idx = std::nullopt,
+        const utils::NTTType ntt_type = utils::NTTType::NEGACYCLIC);
 
     Preset preset() const noexcept;
     void setType(const SwitchKeyKind type) noexcept;
@@ -488,14 +512,22 @@ public:
     Size rotIdx() const noexcept;
     Size dnum() const noexcept;
 
-    void addAx(const Size num_polyunit, std::optional<Size> size = std::nullopt,
-               const bool ntt_state = false);
+    void
+    addAx(const Size num_polyunit, std::optional<Size> size = std::nullopt,
+          const utils::NTTType ntt_type = utils::NTTType::NONNTT,
+          const utils::NTTRootType root_type = utils::getGlobalNTTRootType());
     void addAx(const PolynomialT<U> &poly);
-    void addBx(const Size num_polyunit, std::optional<Size> size = std::nullopt,
-               const bool ntt_state = false);
+    void
+    addBx(const Size num_polyunit, std::optional<Size> size = std::nullopt,
+          const utils::NTTType ntt_type = utils::NTTType::NONNTT,
+          const utils::NTTRootType root_type = utils::getGlobalNTTRootType());
     void addBx(const PolynomialT<U> &poly);
-    void setAxNTT(bool ntt_state) noexcept;
-    void setBxNTT(bool ntt_state) noexcept;
+    void setAxNTT(const utils::NTTType ntt_type,
+                  const utils::NTTRootType root_type =
+                      utils::getGlobalNTTRootType()) noexcept;
+    void setBxNTT(const utils::NTTType ntt_type,
+                  const utils::NTTRootType root_type =
+                      utils::getGlobalNTTRootType()) noexcept;
     Size axSize() const noexcept;
     Size bxSize() const noexcept;
     std::vector<PolynomialT<U>> &getAx() noexcept;

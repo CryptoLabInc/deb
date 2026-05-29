@@ -113,14 +113,20 @@ FCoeffMessage deserializeFCoeff(const deb_fb::Coeff32 *coeff) {
 flatbuffers::Offset<deb_fb::PolyUnit>
 serializePolyUnit(flatbuffers::FlatBufferBuilder &builder,
                   const PolyUnit &polyunit) {
+    // encoding ntt type and root type into a single int
+    int ntt_info = static_cast<int>(polyunit.getNTTType()) * 10 +
+                   static_cast<int>(polyunit.getNTTRootType());
     return deb_fb::CreatePolyUnit(
-        builder, polyunit.prime(), polyunit.degree(), polyunit.isNTT(),
+        builder, polyunit.prime(), polyunit.degree(), ntt_info,
         builder.CreateVector(polyunit.data(), polyunit.degree()));
 }
 
 PolyUnit deserializePolyUnit(const deb_fb::PolyUnit *polyunit) {
     PolyUnit poly_t(polyunit->prime(), polyunit->degree());
-    poly_t.setNTT(polyunit->ntt_state());
+    int ntt_info = polyunit->ntt_info();
+    // encoding ntt type and root type into a single int
+    poly_t.setNTT(static_cast<utils::NTTType>(ntt_info / 10),
+                  static_cast<utils::NTTRootType>(ntt_info % 10));
     std::memcpy(poly_t.data(), polyunit->array()->data(),
                 poly_t.degree() * sizeof(u64));
     return poly_t;

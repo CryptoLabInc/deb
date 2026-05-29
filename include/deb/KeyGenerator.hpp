@@ -18,6 +18,7 @@
 
 #include "CKKSTypes.hpp"
 #include "utils/FFT.hpp"
+#include "utils/NTT.hpp"
 #include "utils/PresetTraits.hpp"
 #include "utils/RandomGenerator.hpp"
 
@@ -59,6 +60,7 @@ public:
     KeyGeneratorT(const KeyGeneratorT &) = delete;
     ~KeyGeneratorT() = default;
 
+    void addNTTType(const utils::NTTType ntt_type);
     /**
      * @brief Generates a switching key that maps one polynomial basis to
      * another.
@@ -69,18 +71,22 @@ public:
      * @param ax_size Optional size hint for the ax buffer.
      * @param bx_size Optional size hint for the bx buffer.
      */
-    void genSwitchingKey(const PolynomialT<U> *from, const PolynomialT<U> *to,
-                         PolynomialT<U> *ax, PolynomialT<U> *bx,
-                         const Size ax_size = 0, const Size bx_size = 0) const;
+    void genSwitchingKey(
+        const PolynomialT<U> *from, const PolynomialT<U> *to,
+        PolynomialT<U> *ax, PolynomialT<U> *bx, const Size ax_size = 0,
+        const Size bx_size = 0,
+        const utils::NTTType ntt_type = utils::NTTType::NEGACYCLIC) const;
 
     /**
-     * @brief Generates an encryption key.
+     * @brief Generates an encryption key. The NTT type is derived
+     * automatically from the NTT state stored in @p sk.
      * @param sk Secret key to generate public key.
      * @return Newly created encryption key.
      */
     SwitchKeyT<U> genEncKey(const SecretKeyT<U> &sk) const;
     /**
      * @brief Generates an encryption key directly into an existing object.
+     * The NTT type is derived automatically from the NTT state stored in @p sk.
      * @param enckey Output storage for encryption key.
      * @param sk Secret key to generate public key.
      */
@@ -378,8 +384,7 @@ private:
     void frobeniusMapInNTT(const PolynomialT<U> &op, const i32 pow,
                            PolynomialT<U> res) const;
 
-    PolynomialT<U> sampleGaussian(const Size num_polyunit,
-                                  bool do_ntt = false) const;
+    PolynomialT<U> sampleGaussian(const Size num_polyunit) const;
 
     void sampleUniform(PolynomialT<U> &poly) const;
     void computeConst();

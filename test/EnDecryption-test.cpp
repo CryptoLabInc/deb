@@ -16,6 +16,7 @@
 
 #include "DebParam.hpp"
 #include "TestBase.hpp"
+#include "utils/FFT.hpp"
 #include "utils/OmpUtils.hpp"
 
 using namespace deb;
@@ -268,8 +269,197 @@ TEST_P(EnDecrypt, ScaleEncryptAndDecryptCoeffWithEncKey) {
     }
 }
 
+/*---------------------------------------------------
+    Real Encryption Tests
+---------------------------------------------------*/
+class RealEnDecrypt : public DebTestBase {
+public:
+    RealEnDecrypt() {
+        for (auto &p : Presets) {
+            if (get_preset_name(p) == "FGbD12L0") {
+                preset = p;
+                break;
+            }
+        }
+        if (get_preset_name(preset) == "FGbD12L0") {
+            encryptor = Encryptor(preset);
+            decryptor = Decryptor(preset);
+            num_slots = get_num_slots(preset);
+            degree = get_degree(preset);
+            num_secret = get_num_secret(preset);
+        }
+    }
+    void SetUp() override {
+        if (get_preset_name(preset) != "FGbD12L0") {
+            GTEST_SKIP()
+                << "No suitable preset found for real encryption tests.";
+        }
+    }
+};
+
+TEST_P(RealEnDecrypt, EncryptAndDecryptWithSecretKey) {
+    MSGS msg = gen_empty_real_message<MSGS>();
+    for (Size s = 0; s < num_secret; ++s) {
+        for (Size j = 0; j < degree; ++j) {
+            msg[s][j].real(dist(gen));
+            msg[s][j].imag(0.0);
+        }
+    }
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset, std::nullopt,
+                                                    utils::NTTType::CYCLIC);
+    MSGS decrypted_msg = gen_empty_real_message<MSGS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        MSGS scaled_msg = scale_complex_message(msg, l);
+        encryptor.encrypt(scaled_msg, sk, ctxt,
+                          EncryptOptions().Level(l).RealEncrypt(true));
+        decryptor.decrypt(ctxt, sk, decrypted_msg);
+        compare_heaan_msg(scaled_msg, decrypted_msg, scale_error(sk_err, l));
+    }
+}
+
+TEST_P(RealEnDecrypt, EncryptAndDecryptFloatWithSecretKey) {
+    FMSGS msg = gen_empty_real_message<FMSGS>();
+    for (Size s = 0; s < num_secret; ++s) {
+        for (Size j = 0; j < degree; ++j) {
+            msg[s][j].real(static_cast<float>(dist(gen)));
+            msg[s][j].imag(0.0f);
+        }
+    }
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset, std::nullopt,
+                                                    utils::NTTType::CYCLIC);
+    FMSGS decrypted_msg = gen_empty_real_message<FMSGS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        FMSGS scaled_msg = scale_complex_message(msg, l);
+        encryptor.encrypt(scaled_msg, sk, ctxt,
+                          EncryptOptions().Level(l).RealEncrypt(true));
+        decryptor.decrypt(ctxt, sk, decrypted_msg);
+        compare_heaan_msg(scaled_msg, decrypted_msg, scale_error(sk_err_f, l));
+    }
+}
+
+TEST_P(RealEnDecrypt, EncryptAndDecryptWithEncKey) {
+    MSGS msg = gen_empty_real_message<MSGS>();
+    for (Size s = 0; s < num_secret; ++s) {
+        for (Size j = 0; j < degree; ++j) {
+            msg[s][j].real(dist(gen));
+            msg[s][j].imag(0.0);
+        }
+    }
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset, std::nullopt,
+                                                    utils::NTTType::CYCLIC);
+    KeyGenerator keygen(preset);
+    SwitchKey enckey = keygen.genEncKey(sk);
+    MSGS decrypted_msg = gen_empty_real_message<MSGS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        MSGS scaled_msg = scale_complex_message(msg, l);
+        encryptor.encrypt(scaled_msg, enckey, ctxt,
+                          EncryptOptions().Level(l).RealEncrypt(true));
+        decryptor.decrypt(ctxt, sk, decrypted_msg);
+        compare_heaan_msg(scaled_msg, decrypted_msg, scale_error(enc_err, l));
+    }
+}
+
+TEST_P(RealEnDecrypt, EncryptAndDecryptFloatWithEncKey) {
+    FMSGS msg = gen_empty_real_message<FMSGS>();
+    for (Size s = 0; s < num_secret; ++s) {
+        for (Size j = 0; j < degree; ++j) {
+            msg[s][j].real(static_cast<float>(dist(gen)));
+            msg[s][j].imag(0.0f);
+        }
+    }
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset, std::nullopt,
+                                                    utils::NTTType::CYCLIC);
+    KeyGenerator keygen(preset);
+    SwitchKey enckey = keygen.genEncKey(sk);
+
+    FMSGS decrypted_msg = gen_empty_real_message<FMSGS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        FMSGS scaled_msg = scale_complex_message(msg, l);
+        encryptor.encrypt(scaled_msg, enckey, ctxt,
+                          EncryptOptions().Level(l).RealEncrypt(true));
+        decryptor.decrypt(ctxt, sk, decrypted_msg);
+        compare_heaan_msg(scaled_msg, decrypted_msg, scale_error(enc_err_f, l));
+    }
+}
+
+TEST_P(RealEnDecrypt, EncryptAndDecryptCoeffWithSecretKey) {
+    COEFFS coeff = gen_random_coeff<COEFFS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset, std::nullopt,
+                                                    utils::NTTType::CYCLIC);
+    COEFFS decrypted_coeff = gen_empty_coeff<COEFFS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        COEFFS scaled_coeff = scale_coeff(coeff, l);
+        encryptor.encrypt(scaled_coeff, sk, ctxt,
+                          EncryptOptions().Level(l).RealEncrypt(true));
+        decryptor.decrypt(ctxt, sk, decrypted_coeff);
+        compare_coeff(scaled_coeff, decrypted_coeff, scale_error(sk_err_f, l));
+    }
+}
+
+TEST_P(RealEnDecrypt, EncryptAndDecryptFloatCoeffWithSecretKey) {
+    FCOEFFS coeff = gen_random_coeff<FCOEFFS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset, std::nullopt,
+                                                    utils::NTTType::CYCLIC);
+    FCOEFFS decrypted_coeff = gen_empty_coeff<FCOEFFS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        encryptor.encrypt(coeff, sk, ctxt,
+                          EncryptOptions().Level(l).RealEncrypt(true));
+        decryptor.decrypt(ctxt, sk, decrypted_coeff);
+        compare_coeff(coeff, decrypted_coeff, scale_error(sk_err, l));
+    }
+}
+
+TEST_P(RealEnDecrypt, EncryptAndDecryptCoeffWithEncKey) {
+    COEFFS coeff = gen_random_coeff<COEFFS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset, std::nullopt,
+                                                    utils::NTTType::CYCLIC);
+    KeyGenerator keygen(preset);
+    SwitchKey enckey = keygen.genEncKey(sk);
+    COEFFS decrypted_coeff = gen_empty_coeff<COEFFS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        encryptor.encrypt(coeff, enckey, ctxt,
+                          EncryptOptions().Level(l).RealEncrypt(true));
+        decryptor.decrypt(ctxt, sk, decrypted_coeff);
+        compare_coeff(coeff, decrypted_coeff, scale_error(enc_err_f, l));
+    }
+}
+
+TEST_P(RealEnDecrypt, EncryptAndDecryptFloatCoeffWithEncKey) {
+    FCOEFFS coeff = gen_random_coeff<FCOEFFS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset, std::nullopt,
+                                                    utils::NTTType::CYCLIC);
+    KeyGenerator keygen(preset);
+    SwitchKey enckey = keygen.genEncKey(sk);
+    FCOEFFS decrypted_coeff = gen_empty_coeff<FCOEFFS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        encryptor.encrypt(coeff, enckey, ctxt,
+                          EncryptOptions().Level(l).RealEncrypt(true));
+        decryptor.decrypt(ctxt, sk, decrypted_coeff);
+        compare_coeff(coeff, decrypted_coeff, scale_error(enc_err_f, l));
+    }
+}
+
 #define X(PRESET) Preset::PRESET_##PRESET,
 const std::vector<Preset> all_presets = {PRESET_LIST
 #undef X
 };
 INSTANTIATE_TEST_SUITE_P(EnDecrypt, EnDecrypt, testing::ValuesIn(all_presets));
+
+INSTANTIATE_TEST_SUITE_P(RealEnDecrypt, RealEnDecrypt,
+                         testing::Values(static_cast<Preset>(0)));

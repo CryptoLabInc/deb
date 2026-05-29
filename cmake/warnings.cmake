@@ -18,7 +18,7 @@ function(set_deb_warnings target)
   target_compile_options(
     ${target}
     PRIVATE
-      $<$<OR:$<C_COMPILER_ID:Clang>,$<C_COMPILER_ID:AppleClang>,$<C_COMPILER_ID:GNU>>:
+      $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:
       -Wall
       -Wconversion
       -Wextra
@@ -28,6 +28,6 @@ function(set_deb_warnings target)
       -Wunused
       -Wvla
       >
-      $<$<C_COMPILER_ID:MSVC>:
+      $<$<CXX_COMPILER_ID:MSVC>:
       /W4>)
 endfunction()

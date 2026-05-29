@@ -17,7 +17,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(
   deb
-  VERSION 0.3.1
+  VERSION 0.4.0
   LANGUAGES CXX
   DESCRIPTION "CryptoLab's official cryptosystem library for FHE.")
 
@@ -113,6 +113,7 @@ set(DEB_SRC
     src/KeyGenerator.cpp
     src/ModArith.cpp
     src/NTT.cpp
+    src/NTTConfig.cpp
     src/OmpUtils.cpp
     src/Preset.cpp
     src/RandomGenerator.cpp

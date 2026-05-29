@@ -19,7 +19,6 @@
 #include "Serialize.hpp"
 #endif
 
-using namespace std;
 using namespace deb;
 
 int main() {
@@ -36,12 +35,12 @@ int main() {
 
 #ifdef DEB_SERIALIZE
     // Serialize seed only secret key
-    ostringstream os;
+    std::ostringstream os;
     serializeToStream(seed_only_sk, os);
     std::cout << "Serialized secret key size (seed only): " << os.str().size() << " bytes" << std::endl;
 
     // Serialize coeff only secret key
-    os = ostringstream(); // Clear the stream
+    os = std::ostringstream(); // Clear the stream
     serializeToStream(coeff_only_sk, os);
     std::cout << "Serialized secret key size (coeff only): " << os.str().size() << " bytes" << std::endl;
 #endif

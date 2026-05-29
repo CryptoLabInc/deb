@@ -44,7 +44,6 @@ SeedGenerator::SeedGenerator(const std::optional<RNGSeed> &seeds) {
                 ptr[j] = rd();
             }
         }
-        // seeds.emplace(nseeds);
         rng_ = createRandomGenerator(nseeds);
     } else {
         rng_ = createRandomGenerator(seeds.value());

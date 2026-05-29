@@ -121,7 +121,11 @@ public:
      * @param scale Scaling factor for decoding.
      */
     template <typename MSG>
-    void decode(const PolynomialT<U> &ptxt, MSG &msg, Real scale) const;
+    void decode(const PolynomialT<U> &ptxt, MSG &msg, Real scale,
+                bool is_real) const;
+
+    void changeNTTRootType(const utils::NTTRootType root_type);
+    utils::NTTRootType getNTTRootType() const;
 
 private:
     template <typename CMSG>
@@ -174,9 +178,11 @@ private:
         const PolynomialT<u_type> &ptxt, FCoeffMessage &coeff, Real scale)     \
         const;                                                                 \
     prefix template void DecryptorT<preset, u_type>::decode<Message>(          \
-        const PolynomialT<u_type> &ptxt, Message &msg, Real scale) const;      \
+        const PolynomialT<u_type> &ptxt, Message &msg, Real scale,             \
+        bool is_real) const;                                                   \
     prefix template void DecryptorT<preset, u_type>::decode<FMessage>(         \
-        const PolynomialT<u_type> &ptxt, FMessage &msg, Real scale) const;
+        const PolynomialT<u_type> &ptxt, FMessage &msg, Real scale,            \
+        bool is_real) const;
 
 #define DECRYPT_TYPE_TEMPLATE(preset, u_type, prefix)                          \
     prefix template class DecryptorT<preset, u_type>;                          \

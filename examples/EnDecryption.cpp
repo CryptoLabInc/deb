@@ -17,7 +17,6 @@
 #include "ExampleUtils.hpp"
 
 #include <random>
-using namespace std;
 using namespace deb;
 
 int main() {
@@ -83,7 +82,7 @@ int main() {
     }
     // Encrypt with iNTT output
     {
-        auto opt = EncryptOptions().NttOut(false);
+        auto opt = EncryptOptions().NTTOut(false);
         DebTimer::start("iNTT Output EnDecryption");
         enc.encrypt(msg, sk, ctxt, opt);
         dec.decrypt(ctxt, sk, decrypted_msg);
@@ -94,7 +93,7 @@ int main() {
     // Encrypt with all custom options
     {
         DebTimer::start("All Custom Options EnDecryption");
-        enc.encrypt(msg, sk, ctxt, EncryptOptions().Scale(scale).Level(custom_level).NttOut(false));
+        enc.encrypt(msg, sk, ctxt, EncryptOptions().Scale(scale).Level(custom_level).NTTOut(false));
         dec.decrypt(ctxt, sk, decrypted_msg, scale);
         DebTimer::end();
         std::cout << "log2 error = " << compareMessage(msg, decrypted_msg) << " bits" << std::endl;
@@ -120,7 +119,7 @@ int main() {
     // Encrypt with all custom options
     {
         DebTimer::start("All Custom Options Coeff EnDecryption");
-        enc.encrypt(cmsg, sk, ctxt, EncryptOptions().Scale(scale).Level(custom_level).NttOut(false));
+        enc.encrypt(cmsg, sk, ctxt, EncryptOptions().Scale(scale).Level(custom_level).NTTOut(false));
         dec.decrypt(ctxt, sk, decrypted_cmsg, scale);
         DebTimer::end();
         std::cout << "log2 error = " << compareMessage(msg, decrypted_msg) << " bits" << std::endl;
@@ -154,7 +153,7 @@ int main() {
     // Encrypt with all custom options
     {
         DebTimer::start("All Custom Options EnDecryption with EncKey");
-        enc.encrypt(msg, ek, ctxt, EncryptOptions().Scale(scale).Level(custom_level).NttOut(false));
+        enc.encrypt(msg, ek, ctxt, EncryptOptions().Scale(scale).Level(custom_level).NTTOut(false));
         dec.decrypt(ctxt, sk, decrypted_msg, scale);
         DebTimer::end();
         std::cout << "log2 error = " << compareMessage(msg, decrypted_msg) << " bits" << std::endl;
@@ -163,7 +162,7 @@ int main() {
     // Encrypt with all custom options
     {
         DebTimer::start("All Custom Options Coeff EnDecryption with EncKey");
-        enc.encrypt(cmsg, ek, ctxt, EncryptOptions().Scale(scale).Level(custom_level).NttOut(false));
+        enc.encrypt(cmsg, ek, ctxt, EncryptOptions().Scale(scale).Level(custom_level).NTTOut(false));
         dec.decrypt(ctxt, sk, decrypted_cmsg, scale);
         DebTimer::end();
         std::cout << "log2 error = " << compareCoeff(cmsg, decrypted_cmsg) << " bits" << std::endl;

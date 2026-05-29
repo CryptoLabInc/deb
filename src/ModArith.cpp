@@ -30,26 +30,32 @@ namespace deb::utils {
 // ---------------------------------------------------------------------------
 
 template <Size D, typename U>
-ModArith<D, U>::ModArith(u64 prime)
+ModArith<D, U>::ModArith(u64 prime, bool default_ntt_is_cyclic)
     : prime_(static_cast<U>(prime)), two_prime_(static_cast<U>(prime << 1)),
       barrett_expt_(bitWidth(prime) - 1),
       barrett_ratio_(static_cast<u64>(
           (static_cast<u128>(1) << (barrett_expt_ + 63)) / prime)),
-      default_array_size_(degree),
+      default_array_size_(D),
       barrett_ratio_for_u64_(divide128By64Lo(UINT64_C(1), UINT64_C(0), prime)),
       barrett_ratio_for_u32_(
           static_cast<u32>((static_cast<u64>(1) << 32) / prime)),
       two_to_64_(powModSimple(2, 64, prime)),
       two_to_64_shoup_(divide128By64Lo(two_to_64_, UINT64_C(0), prime)),
-      ntt_(std::make_shared<NTT<U>>(degree, prime)) {
+      root_type_(getGlobalNTTRootType()) {
     if constexpr (D == 1) {
         throw std::runtime_error("[ModArith] Degree template parameter must be "
                                  "non-zero when degree is not specified");
     }
+    if (default_ntt_is_cyclic) {
+        ensureCyclicNTT();
+    } else {
+        ensureNegacyclicNTT();
+    }
 }
 
 template <Size D, typename U>
-ModArith<D, U>::ModArith(Size actual_degree, u64 prime)
+ModArith<D, U>::ModArith(Size actual_degree, u64 prime,
+                         bool default_ntt_is_cyclic)
     : DegreeTrait<D>(actual_degree), prime_(static_cast<U>(prime)),
       two_prime_(static_cast<U>(prime << 1)),
       barrett_expt_(bitWidth(prime) - 1),
@@ -61,7 +67,13 @@ ModArith<D, U>::ModArith(Size actual_degree, u64 prime)
           static_cast<u32>((static_cast<u64>(1) << 32) / prime)),
       two_to_64_(powModSimple(2, 64, prime)),
       two_to_64_shoup_(divide128By64Lo(two_to_64_, UINT64_C(0), prime)),
-      ntt_(std::make_shared<NTT<U>>(actual_degree, prime)) {}
+      root_type_(getGlobalNTTRootType()) {
+    if (default_ntt_is_cyclic) {
+        ensureCyclicNTT();
+    } else {
+        ensureNegacyclicNTT();
+    }
+}
 
 // ---------------------------------------------------------------------------
 // constMult
@@ -136,31 +148,43 @@ inline void for_each_modarith(const std::vector<ModArith<D, U>> &modarith,
 
 template <Size D, typename U>
 void forwardNTT(const std::vector<ModArith<D, U>> &modarith,
-                PolynomialT<U> &poly, Size num_polyunit,
+                PolynomialT<U> &poly, Size num_polyunit, NTTType ntt_type,
                 [[maybe_unused]] bool expected_ntt_state) {
     deb_assert(poly[0].isNTT() == expected_ntt_state,
                "[forwardNTT] NTT state mismatch");
+    deb_assert(ntt_type != NTTType::NONNTT,
+               "[forwardNTT] Invalid NTT type: NONNTT");
     num_polyunit = num_polyunit ? num_polyunit : poly.size();
     for_each_modarith(
-        modarith, [](const ModArith<D, U> &ma, U *p) { ma.forwardNTT(p); },
+        modarith,
+        [ntt_type](const ModArith<D, U> &ma, U *p) {
+            ma.forwardNTT(p, ntt_type);
+        },
         num_polyunit, poly);
     for (Size i = 0; i < num_polyunit; ++i) {
-        poly[i].setNTT(true);
+        poly[i].setNTT(modarith[i].getNTT(ntt_type)->getType(),
+                       modarith[i].getNTT(ntt_type)->getRootType());
     }
 }
 
 template <Size D, typename U>
 void backwardNTT(const std::vector<ModArith<D, U>> &modarith,
-                 PolynomialT<U> &poly, Size num_polyunit,
+                 PolynomialT<U> &poly, Size num_polyunit, NTTType ntt_type,
                  [[maybe_unused]] bool expected_ntt_state) {
     deb_assert(poly[0].isNTT() == expected_ntt_state,
                "[backwardNTT] NTT state mismatch");
+    deb_assert(
+        ntt_type == poly[0].getNTTType(),
+        "[backwardNTT] NTT type mismatch between ModArith and polynomial");
     num_polyunit = num_polyunit ? num_polyunit : poly.size();
     for_each_modarith(
-        modarith, [](const ModArith<D, U> &ma, U *p) { ma.backwardNTT(p); },
+        modarith,
+        [ntt_type](const ModArith<D, U> &ma, U *p) {
+            ma.backwardNTT(p, ntt_type);
+        },
         num_polyunit, poly);
     for (Size i = 0; i < num_polyunit; ++i) {
-        poly[i].setNTT(false);
+        poly[i].setNTT(utils::NTTType::NONNTT);
     }
 }
 
@@ -174,7 +198,9 @@ void addPoly(const std::vector<ModArith<D, U>> &modarith,
              PolynomialT<U> &res, Size num_polyunit) {
     deb_assert(op1[0].isNTT() == op2[0].isNTT(),
                "[addPoly] operands NTT state mismatch");
-    PRAGMA_OMP(omp single) { res.setNTT(op1[0].isNTT()); }
+    PRAGMA_OMP(omp single) {
+        res.setNTT(op1[0].getNTTType(), op1[0].getNTTRootType());
+    }
 
     const auto degree = res[0].degree();
     num_polyunit = num_polyunit ? num_polyunit : res.size();
@@ -194,7 +220,9 @@ void addPolyConst(const std::vector<ModArith<D, U>> &modarith,
                   PolynomialT<U> &res, Size num_polyunit) {
     deb_assert(op1[0].isNTT() == op2[0].isNTT(),
                "[addPoly] operands NTT state mismatch");
-    PRAGMA_OMP(omp single) { res.setNTT(op1[0].isNTT()); }
+    PRAGMA_OMP(omp single) {
+        res.setNTT(op1[0].getNTTType(), op1[0].getNTTRootType());
+    }
 
     const auto degree = res[0].degree();
     num_polyunit = num_polyunit ? num_polyunit : res.size();
@@ -214,7 +242,9 @@ void subPoly(const std::vector<ModArith<D, U>> &modarith,
              PolynomialT<U> &res, Size num_polyunit) {
     deb_assert(op1[0].isNTT() == op2[0].isNTT(),
                "[subPoly] operands NTT state mismatch");
-    PRAGMA_OMP(omp single) { res.setNTT(op1[0].isNTT()); }
+    PRAGMA_OMP(omp single) {
+        res.setNTT(op1[0].getNTTType(), op1[0].getNTTRootType());
+    }
 
     const auto degree = res[0].degree();
     num_polyunit = num_polyunit ? num_polyunit : res.size();
@@ -237,7 +267,9 @@ void mulPoly(const std::vector<ModArith<D, U>> &modarith,
              PolynomialT<U> &res, Size num_polyunit) {
     deb_assert(op1[0].isNTT() == op2[0].isNTT(),
                "[mulPoly] operands NTT state mismatch");
-    PRAGMA_OMP(omp single) { res.setNTT(op1[0].isNTT()); }
+    PRAGMA_OMP(omp single) {
+        res.setNTT(op1[0].getNTTType(), op1[0].getNTTRootType());
+    }
 
     const auto degree = res[0].degree();
     num_polyunit = num_polyunit ? num_polyunit : res.size();
@@ -275,7 +307,9 @@ void mulPolyConst(const std::vector<ModArith<D, U>> &modarith,
                   PolynomialT<U> &res, Size num_polyunit) {
     deb_assert(op1[0].isNTT() == op2[0].isNTT(),
                "[mulPoly] operands NTT state mismatch");
-    PRAGMA_OMP(omp single) { res.setNTT(op1[0].isNTT()); }
+    PRAGMA_OMP(omp single) {
+        res.setNTT(op1[0].getNTTType(), op1[0].getNTTRootType());
+    }
 
     const auto degree = res[0].degree();
     num_polyunit = num_polyunit ? num_polyunit : res.size();
@@ -311,7 +345,9 @@ template <Size D, typename U>
 void constMulPoly(const std::vector<ModArith<D, U>> &modarith,
                   const PolynomialT<U> &op1, const U *op2, PolynomialT<U> &res,
                   Size s_id, Size e_id) {
-    PRAGMA_OMP(omp single) { res.setNTT(op1[0].isNTT()); }
+    PRAGMA_OMP(omp single) {
+        res.setNTT(op1[0].getNTTType(), op1[0].getNTTRootType());
+    }
 
     PRAGMA_OMP(omp for schedule(static))
     for (Size i = s_id; i < e_id; ++i) {

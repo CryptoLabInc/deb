@@ -23,6 +23,9 @@ set(${PROJECT_NAME}_example example_utils ${PROJECT_NAME})
 add_executable(EnDecryption EnDecryption.cpp)
 target_link_libraries(EnDecryption PRIVATE ${${PROJECT_NAME}_example})
 
+add_executable(EnDecryption-Real EnDecryption-Real.cpp)
+target_link_libraries(EnDecryption-Real PRIVATE ${${PROJECT_NAME}_example})
+
 add_executable(EnDecryption-MultiSecret EnDecryption-MultiSecret.cpp)
 target_link_libraries(EnDecryption-MultiSecret
                       PRIVATE ${${PROJECT_NAME}_example})
