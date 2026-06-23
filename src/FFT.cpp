@@ -31,16 +31,37 @@ template <typename T> void bitReverseMessage(deb::MessageImpl<T> &m) {
 template <bool Direction, typename T>
 inline void butterfly(deb::ComplexT<T> &u, deb::ComplexT<T> &v,
                       const deb::ComplexT<double> root) {
+    // Explicit scalar complex arithmetic. This is bit-identical to the
+    // std::complex operators for finite inputs but avoids GCC's full-range
+    // complex-multiply path (the per-multiply NaN/Inf guard that falls back to
+    // libgcc __muldc3/__mulsc3), which is dead weight for FFT data that is
+    // always finite. The per-direction promotion is preserved exactly:
+    // forward multiplies/accumulates in double then narrows to T; backward
+    // does the add/sub and the twiddle multiply in T.
     if constexpr (Direction) {
-        deb::ComplexT<double> u0 = u;
-        deb::ComplexT<double> v0 = static_cast<deb::ComplexT<double>>(v) * root;
-        u = static_cast<deb::ComplexT<T>>(u0 + v0);
-        v = static_cast<deb::ComplexT<T>>(u0 - v0);
+        const double u0r = static_cast<double>(u.real());
+        const double u0i = static_cast<double>(u.imag());
+        const double vr = static_cast<double>(v.real());
+        const double vi = static_cast<double>(v.imag());
+        const double wr = root.real();
+        const double wi = root.imag();
+        const double pr = vr * wr - vi * wi; // (v * root).real
+        const double pi = vr * wi + vi * wr; // (v * root).imag
+        u = deb::ComplexT<T>(static_cast<T>(u0r + pr),
+                             static_cast<T>(u0i + pi));
+        v = deb::ComplexT<T>(static_cast<T>(u0r - pr),
+                             static_cast<T>(u0i - pi));
     } else {
-        deb::ComplexT<T> u0 = u;
-        deb::ComplexT<T> v0 = v;
-        u = u0 + v0;
-        v = (u0 - v0) * static_cast<deb::ComplexT<T>>(root);
+        const T u0r = u.real(), u0i = u.imag();
+        const T v0r = v.real(), v0i = v.imag();
+        const T dr = static_cast<T>(u0r - v0r);
+        const T di = static_cast<T>(u0i - v0i);
+        const T wr = static_cast<T>(root.real());
+        const T wi = static_cast<T>(root.imag());
+        u = deb::ComplexT<T>(static_cast<T>(u0r + v0r),
+                             static_cast<T>(u0i + v0i));
+        v = deb::ComplexT<T>(static_cast<T>(dr * wr - di * wi),
+                             static_cast<T>(dr * wi + di * wr));
     }
 }
 
@@ -120,9 +141,11 @@ template <typename T> void FFT::backwardFFT(MessageImpl<T> &msg) const {
     for (Size gap = sz / 2; gap != 0; gap >>= 1)
         computeSingleStep<false, T>(msg.data(), sz, gap, roots_ptr + gap);
     bitReverseMessage(msg);
+    // sz is always a power of two, so 1/sz is exactly representable: x*(1/sz)
+    // is bit-identical to x/sz but uses a multiply instead of a divide.
+    const T inv_sz = static_cast<T>(1) / static_cast<T>(sz);
     for (Size i = 0; i < sz; ++i)
-        msg[i] = {msg[i].real() / static_cast<T>(sz),
-                  msg[i].imag() / static_cast<T>(sz)};
+        msg[i] = {msg[i].real() * inv_sz, msg[i].imag() * inv_sz};
 }
 
 FFT::FFT(const u64 degree) {

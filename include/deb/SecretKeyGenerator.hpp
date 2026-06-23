@@ -44,24 +44,24 @@ public:
 
     /**
      * @brief Generates a new secret key.
-     * @param seeds Optional deterministic RNG seeds.
+     * @param seed Optional deterministic RNG seed.
      * @param ntt_type NTT type used for the polynomial embedding (default:
      * negacyclic, matching standard CKKS).  Pass NTTType::CYCLIC for
      * real-HEAAN mode.
      * @return Fresh secret key.
      */
     SecretKeyT<U>
-    genSecretKey(std::optional<const RNGSeed> seeds = std::nullopt,
+    genSecretKey(std::optional<const RNGSeed> seed = std::nullopt,
                  utils::NTTType ntt_type = utils::NTTType::NEGACYCLIC);
     /**
      * @brief Generates a secret key into the provided object.
      * @param sk Output storage for secret key.
-     * @param seeds Optional deterministic seed override.
+     * @param seed Optional deterministic seed override.
      * @param ntt_type NTT type for the polynomial embedding.
      */
     void
     genSecretKeyInplace(SecretKeyT<U> &sk,
-                        std::optional<const RNGSeed> seeds = std::nullopt,
+                        std::optional<const RNGSeed> seed = std::nullopt,
                         utils::NTTType ntt_type = utils::NTTType::NEGACYCLIC);
     /**
      * @brief Builds a secret key from explicit coefficient data.
@@ -127,24 +127,24 @@ public:
      * @brief Convenience wrapper that constructs a generator and produces a
      * secret key.
      * @param preset Target preset.
-     * @param seeds Optional deterministic seed.
+     * @param seed Optional deterministic seed.
      * @param ntt_type NTT type for the polynomial embedding.
      * @return Newly generated secret key.
      */
     static SecretKeyT<U>
     GenSecretKey(const Preset preset,
-                 std::optional<const RNGSeed> seeds = std::nullopt,
+                 std::optional<const RNGSeed> seed = std::nullopt,
                  utils::NTTType ntt_type = utils::NTTType::NEGACYCLIC);
     /**
      * @brief Generates a secret key in-place without instantiating a separate
      * generator.
      * @param sk Output storage for secret key.
-     * @param seeds Optional deterministic seed.
+     * @param seed Optional deterministic seed.
      * @param ntt_type NTT type for the polynomial embedding.
      */
     static void
     GenSecretKeyInplace(SecretKeyT<U> &sk,
-                        std::optional<const RNGSeed> seeds = std::nullopt,
+                        std::optional<const RNGSeed> seed = std::nullopt,
                         utils::NTTType ntt_type = utils::NTTType::NEGACYCLIC);
 
     /**

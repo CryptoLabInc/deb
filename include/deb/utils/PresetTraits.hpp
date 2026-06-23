@@ -44,4 +44,36 @@ template <typename U> struct PresetTraits<PRESET_EMPTY, U> {
     std::vector<utils::ModArith<1, U>> modarith;
 };
 
+// ---------------------------------------------------------------------------
+// Preset-aware polynomial-multiply dispatch
+//
+// For a compile-time preset (P != PRESET_EMPTY) on u64, route the Barrett
+// multiply kernels through the compile-time-prime specializations, which fold
+// each polyunit's modulus/Barrett-ratio/shift into immediates.  The runtime
+// preset (PRESET_EMPTY) and u32 keep the existing runtime kernels.  The
+// `if constexpr` guard ensures the u128-bodied CT kernel is only instantiated
+// for u64.  PresetTraits<P, U> supplies the constexpr `primes[]`/`num_p`.
+// ---------------------------------------------------------------------------
+template <Preset P, Size D, typename U>
+inline void mulPolyP(const std::vector<utils::ModArith<D, U>> &modarith,
+                     const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+                     PolynomialT<U> &res, Size num_polyunit = 0) {
+    if constexpr (P != PRESET_EMPTY && std::is_same_v<U, u64>)
+        utils::mulPolyCT<PresetTraits<P, U>>(modarith, op1, op2, res,
+                                             num_polyunit);
+    else
+        utils::mulPoly(modarith, op1, op2, res, num_polyunit);
+}
+
+template <Preset P, Size D, typename U>
+inline void mulPolyConstP(const std::vector<utils::ModArith<D, U>> &modarith,
+                          const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+                          PolynomialT<U> &res, Size num_polyunit = 0) {
+    if constexpr (P != PRESET_EMPTY && std::is_same_v<U, u64>)
+        utils::mulPolyConstCT<PresetTraits<P, U>>(modarith, op1, op2, res,
+                                                  num_polyunit);
+    else
+        utils::mulPolyConst(modarith, op1, op2, res, num_polyunit);
+}
+
 } // namespace deb

@@ -39,7 +39,21 @@ struct EncryptOptions {
     Size level = utils::DEB_MAX_SIZE; /**< Encryption level override. */
     bool ntt_out = true; /**< Whether ciphertext output stays in NTT form. */
     bool real_encrypt =
-        false; /**< Whether to use the real-encryption method. */
+        false;                /**< Whether to use the real-encryption method. */
+    bool seed_only_a = false; /**< Store only the seed of the @c a part and
+                                   release its storage after encryption. The
+                                   regenerated @c a follows the ciphertext's
+                                   domain (NTT, or coefficient when
+                                   ntt_out==false). Requires rank==1. */
+    std::optional<RNGSeed> a_seed =
+        std::nullopt; /**< Optional fixed seed for the @c a part. When unset and
+                           @ref seed_only_a is enabled, a fresh seed is drawn.
+                       */
+    std::optional<RNGSeed> error_seed =
+        std::nullopt; /**< Optional fixed seed for the Gaussian error
+                           distribution (deterministic noise). NOTE: reusing the
+                           same error seed across encryptions weakens security;
+                           intended for testing / reproducibility. */
     /**
      * @brief Sets the desired scale value.
      * @param s Requested scale.
@@ -81,6 +95,34 @@ struct EncryptOptions {
         real_encrypt = r;
         return *this;
     }
+    /**
+     * @brief Enables seed-only @c a mode (store the seed, release @c a
+     * storage).
+     * @param b Seed-only flag.
+     * @return Reference to this for chaining.
+     */
+    EncryptOptions &SeedOnlyA(bool b) {
+        seed_only_a = b;
+        return *this;
+    }
+    /**
+     * @brief Sets a fixed seed for the @c a part (implies deterministic @c a).
+     * @param s Seed value.
+     * @return Reference to this for chaining.
+     */
+    EncryptOptions &ASeed(const RNGSeed &s) {
+        a_seed = s;
+        return *this;
+    }
+    /**
+     * @brief Sets a fixed seed for the Gaussian error distribution.
+     * @param s Seed value.
+     * @return Reference to this for chaining.
+     */
+    EncryptOptions &ErrorSeed(const RNGSeed &s) {
+        error_seed = s;
+        return *this;
+    }
 };
 
 [[maybe_unused]] static EncryptOptions default_opt;
@@ -99,11 +141,11 @@ public:
     /**
      * @brief Constructs an encryptor bound to a preset and optional RNG seed.
      * @param target_preset Target preset. Only specified if P is PRESET_EMPTY.
-     * @param seeds Optional deterministic seed.
+     * @param seed Optional deterministic seed.
      */
-    explicit EncryptorT(std::optional<const RNGSeed> seeds = std::nullopt);
+    explicit EncryptorT(std::optional<const RNGSeed> seed = std::nullopt);
     explicit EncryptorT(Preset target_preset,
-                        std::optional<const RNGSeed> seeds = std::nullopt);
+                        std::optional<const RNGSeed> seed = std::nullopt);
     /**
      * @brief Constructs an encryptor with a custom random generator.
      * @param target_preset Target preset.
@@ -197,23 +239,47 @@ public:
     void changeNTTRootType(const utils::NTTRootType root_type);
     utils::NTTRootType getNTTRootType() const;
 
+    /**
+     * @brief Regenerates the @c a part of a UNIFORM (secret-key) seed-only
+     * ciphertext from its stored seed. No key is required.
+     * @param ctxt Seed-only ciphertext to complete in place.
+     */
+    void completeCiphertext(CiphertextT<U> &ctxt) const;
+
+    /**
+     * @brief Regenerates the @c a part of a PUBLICKEY (public-key) seed-only
+     * ciphertext, where @c a = v*ax + e. The same encryption key used at
+     * encryption time must be supplied.
+     * @param ctxt Seed-only ciphertext to complete in place.
+     * @param enckey Encryption (switching) key used to produce @p ctxt.
+     */
+    void completeCiphertext(CiphertextT<U> &ctxt,
+                            const SwitchKeyT<U> &enckey) const;
+
 private:
     /**
      * @brief Samples a zero-one polynomial.
      * @param num_polyunit Number of PolyUnitT entries to sample.
      * @param ntt_type NTT type to use for the sampled polynomial.
+     * @param rng Random generator stream to draw from.
      */
-    void sampleZO(const Size num_polyunit, const utils::NTTType ntt_type) const;
+    void sampleZO(const Size num_polyunit, const utils::NTTType ntt_type,
+                  RandomGenerator *rng) const;
 
     /**
      * @brief Samples a Gaussian polynomial.
      * @param num_polyunit Number of PolyUnitT entries to sample.
      * @param ntt_type NTT type to use for the sampled polynomial.
+     * @param rng Random generator stream to draw from.
      */
-    void sampleGaussian(const Size num_polyunit,
-                        const utils::NTTType ntt_type) const;
+    void sampleGaussian(const Size num_polyunit, const utils::NTTType ntt_type,
+                        RandomGenerator *rng) const;
 
     std::shared_ptr<RandomGenerator> rng_;
+    // Dedicated streams used during a single encrypt() call (null => use rng_).
+    // a_rng_ != null iff seed-only @c a mode is active for that call.
+    mutable std::shared_ptr<RandomGenerator> a_rng_;
+    mutable std::shared_ptr<RandomGenerator> error_rng_;
 
     // compute buffers
     mutable PolynomialT<U> ptxt_buffer_;
@@ -222,9 +288,34 @@ private:
     mutable std::vector<U> mask_;
     mutable std::vector<u64> samples_;
     mutable std::vector<i64> i_samples_;
+    // Reused encode scratch (magnitude + sign mask), sized to the degree so it
+    // never reallocates per encrypt call.
+    mutable std::vector<utils::i128> encode_interim_;
+    mutable std::vector<u64> encode_sign_;
 
     utils::FFT fft_;
 };
+
+/**
+ * @brief Regenerates the @c a part of a UNIFORM (secret-key) seed-only
+ * ciphertext.
+ *
+ * Mirrors @ref completeSecretKey: reseeds from the ciphertext's stored seed and
+ * refills the released @c a polynomial (no key required). Throws if the
+ * ciphertext has no seed, or if it is a PUBLICKEY seed-only ciphertext (use
+ * @ref EncryptorT::completeCiphertext with the encryption key for that case). A
+ * no-op when @c a is already present.
+ *
+ * @param ctxt Seed-only ciphertext to complete in place.
+ */
+template <typename U = u64> void completeCiphertext(CiphertextT<U> &ctxt);
+
+#ifdef DEB_U64
+extern template void completeCiphertext<u64>(CiphertextT<u64> &);
+#endif
+#ifdef DEB_U32
+extern template void completeCiphertext<u32>(CiphertextT<u32> &);
+#endif
 
 // NOLINTBEGIN
 #define DECL_ENCRYPT_TEMPLATE_MSG_KEY(preset, u_type, msg_t, key_t, prefix)    \

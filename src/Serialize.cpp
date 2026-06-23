@@ -114,8 +114,9 @@ flatbuffers::Offset<deb_fb::PolyUnit>
 serializePolyUnit(flatbuffers::FlatBufferBuilder &builder,
                   const PolyUnit &polyunit) {
     // encoding ntt type and root type into a single int
-    int ntt_info = static_cast<int>(polyunit.getNTTType()) * 10 +
-                   static_cast<int>(polyunit.getNTTRootType());
+    int8_t ntt_info =
+        static_cast<int8_t>(static_cast<int>(polyunit.getNTTType()) * 10 +
+                            static_cast<int>(polyunit.getNTTRootType()));
     return deb_fb::CreatePolyUnit(
         builder, polyunit.prime(), polyunit.degree(), ntt_info,
         builder.CreateVector(polyunit.data(), polyunit.degree()));
@@ -157,11 +158,23 @@ serializeCipher(flatbuffers::FlatBufferBuilder &builder,
     std::vector<flatbuffers::Offset<deb_fb::Poly>> bigpolys;
     bigpolys.reserve(cipher.numPoly());
     for (Size i = 0; i < cipher.numPoly(); ++i) {
+        // For a seed-only ciphertext the released 'a' part serializes as an
+        // empty Poly (size 0); the seed below is what restores it.
         bigpolys.push_back(serializePoly(builder, cipher[i]));
     }
+    auto bigpolys_offset = builder.CreateVector(bigpolys);
+
+    RNGSeed seed{};
+    const bool has_seed = cipher.hasSeed();
+    if (has_seed) {
+        seed = cipher.getSeed();
+    }
+    auto seed_offset = builder.CreateVector(has_seed ? seed.data() : nullptr,
+                                            has_seed ? seed.size() : 0);
+
     return deb_fb::CreateCipher(builder, cipher.preset(), cipher.encoding(),
-                                cipher.numPoly(),
-                                builder.CreateVector(bigpolys));
+                                cipher.numPoly(), bigpolys_offset, seed_offset,
+                                static_cast<uint8_t>(cipher.seedMode()));
 }
 
 Ciphertext deserializeCipher(const deb_fb::Cipher *cipher) {
@@ -171,6 +184,16 @@ Ciphertext deserializeCipher(const deb_fb::Cipher *cipher) {
     cipher_t.setEncoding(static_cast<EncodingType>(cipher->encoding()));
     for (Size i = 0; i < cipher_t.numPoly(); ++i) {
         cipher_t[i] = deserializePoly(preset, cipher->bigpolys()->Get(i));
+    }
+    // Restore seed-only state (field absent for legacy buffers -> full cipher).
+    if (cipher->seed() != nullptr && cipher->seed()->size() != 0) {
+        RNGSeed seed{};
+        if (cipher->seed()->size() != seed.size()) {
+            throw std::runtime_error("[deserializeCipher] Invalid seed size.");
+        }
+        std::memcpy(seed.data(), cipher->seed()->data(), sizeof(RNGSeed));
+        cipher_t.setSeed(seed);
+        cipher_t.setSeedMode(static_cast<CipherSeedMode>(cipher->seed_mode()));
     }
     return cipher_t;
 }
@@ -195,8 +218,8 @@ SecretKey deserializeSk(const deb_fb::Sk *sk) {
     RNGSeed seed = {};
     SecretKey sk_t(static_cast<Preset>(sk->preset()), seed);
     sk_t.flushSeed();
-    if (sk->seeds()->size() != 0) {
-        std::memcpy(seed.data(), sk->seeds()->data(), sizeof(RNGSeed));
+    if (sk->seed()->size() != 0) {
+        std::memcpy(seed.data(), sk->seed()->data(), sizeof(RNGSeed));
         sk_t.setSeed(seed);
     }
     if (sk->coeffs()->size() != 0) {

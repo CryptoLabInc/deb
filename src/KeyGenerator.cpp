@@ -90,8 +90,8 @@ inline void automorphism(const deb::i8 *op, deb::i8 *res, const deb::Size sig,
 namespace deb {
 
 template <Preset P, typename U>
-KeyGeneratorT<P, U>::KeyGeneratorT(std::optional<const RNGSeed> seeds)
-    : KeyGeneratorT(P, std::move(seeds)) {
+KeyGeneratorT<P, U>::KeyGeneratorT(std::optional<const RNGSeed> seed)
+    : KeyGeneratorT(P, std::move(seed)) {
     if constexpr (P == PRESET_EMPTY) {
         throw std::runtime_error("[KeyGenerator] Preset must be specified when "
                                  "PRESET_EMPTY template is used.");
@@ -100,9 +100,9 @@ KeyGeneratorT<P, U>::KeyGeneratorT(std::optional<const RNGSeed> seeds)
 
 template <Preset P, typename U>
 KeyGeneratorT<P, U>::KeyGeneratorT(const Preset target_preset,
-                                   std::optional<const RNGSeed> seeds)
+                                   std::optional<const RNGSeed> seed)
     : PresetTraits<P, U>(target_preset),
-      rng_(createRandomGenerator(seeds.value_or(SeedGenerator::Gen()))),
+      rng_(createRandomGenerator(seed.value_or(SeedGenerator::Gen()))),
       fft_(degree) {
     for (u64 i = 0; i < num_p; ++i) {
         modarith.emplace_back(degree, primes[i]);
@@ -146,7 +146,7 @@ void KeyGeneratorT<P, U>::genSwitchingKey(
             auto ex = sampleGaussian(max_length);
             forwardNTT(modarith, ex, 0, ntt_type);
 
-            mulPoly(modarith, a, to[sid], b);
+            mulPolyP<P>(modarith, a, to[sid], b);
             subPoly(modarith, ex, b, b);
 
             for (Size tdx = 0; tdx < max_length; ++tdx) {
@@ -195,7 +195,7 @@ void KeyGeneratorT<P, U>::genEncKeyInplace(SwitchKeyT<U> &enckey,
     forwardNTT(modarith, ex, 0, sk[0][0].getNTTType());
 
     for (Size i = 0; i < num_secret; ++i) {
-        mulPoly(modarith, enckey.ax(), sk[i], enckey.bx(i));
+        mulPolyP<P>(modarith, enckey.ax(), sk[i], enckey.bx(i));
         subPoly(modarith, ex, enckey.bx(i), enckey.bx(i));
     }
 }
@@ -222,7 +222,7 @@ void KeyGeneratorT<P, U>::genMultKeyInplace(SwitchKeyT<U> &mulkey,
     for (Size i = 0; i < num_secret; ++i) {
         sx2.emplace_back(preset, max_length);
         sx2[i].setNTT(sk[0][0].getNTTType(), sk[0][0].getNTTRootType());
-        mulPoly(modarith, sk[i], sk[i], sx2[i]);
+        mulPolyP<P>(modarith, sk[i], sk[i], sx2[i]);
     }
     genSwitchingKey(sx2.data(), sk.data(), mulkey.getAx().data(),
                     mulkey.getBx().data(), 0, 0, sk[0][0].getNTTType());

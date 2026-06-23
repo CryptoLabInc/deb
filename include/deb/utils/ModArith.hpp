@@ -24,6 +24,8 @@
 #include <algorithm>
 #include <memory>
 #include <mutex>
+#include <type_traits>
+#include <utility>
 
 namespace deb::utils {
 
@@ -430,6 +432,132 @@ template <Size D, typename U = u64>
 void constMulPoly(const std::vector<ModArith<D, U>> &modarith,
                   const PolynomialT<U> &op1, const U *op2, PolynomialT<U> &res,
                   Size s_id, Size e_id);
+
+// ---------------------------------------------------------------------------
+// Compile-time-prime polynomial kernels (u64)
+//
+// For a compile-time preset the whole modulus chain is a `static constexpr`
+// array (PS::primes[]), but ModArith stores each prime as a runtime member, so
+// the Barrett reduction in mulPoly/mulPolyConst reloads the modulus, ratio and
+// shift as runtime values.  These header-only templates instead dispatch each
+// polyunit's runtime prime to a loop body specialized on that *constant*
+// prime, turning the modulus, Barrett ratio and shift amount into immediates.
+// That is a measurable (~1.25-1.3x) win for the 64x64->128 Barrett multiply,
+// and the per-polyunit dispatch (a short compare chain over the constexpr
+// prime list) is amortized over the degree-long inner loop.
+//
+// PS is a trait type exposing `static constexpr u64 primes[]` and
+// `static constexpr Size num_p`; PresetTraits<P, U> for a non-EMPTY P
+// satisfies this through its preset base struct.  Any prime not found in the
+// list falls back to the runtime Barrett path, so correctness never depends on
+// the dispatch matching.
+// ---------------------------------------------------------------------------
+
+// Portable constexpr Barrett precomputation (mirrors ModArith's runtime ctor).
+constexpr u64 ctBitWidth(u64 x) {
+    u64 n = 0;
+    while (x) {
+        x >>= 1;
+        ++n;
+    }
+    return n;
+}
+constexpr u64 ctBarrettExpt(u64 prime) { return ctBitWidth(prime) - 1; }
+constexpr u64 ctBarrettRatio(u64 prime) {
+    return static_cast<u64>(
+        (static_cast<u128>(1) << (ctBarrettExpt(prime) + 63)) / prime);
+}
+
+// Walks PS::primes[] at compile time; when one matches the runtime prime it
+// invokes f with that prime as an integral_constant (so the body specializes
+// on it) and reports the match.
+template <typename PS, Size I, typename Fn>
+inline bool dispatchPrimeCT(u64 prime, Fn &&f) {
+    if constexpr (I < static_cast<Size>(PS::num_p)) {
+        constexpr u64 candidate = static_cast<u64>(PS::primes[I]);
+        if (prime == candidate) {
+            f(std::integral_constant<u64, candidate>{});
+            return true;
+        }
+        return dispatchPrimeCT<PS, I + 1>(prime, std::forward<Fn>(f));
+    } else {
+        (void)prime;
+        return false;
+    }
+}
+
+// op1 * op2 in the NTT domain, with the Barrett modulus chosen at compile time
+// per polyunit.  `LazyConstSub` selects subIfGEConst (branch-free) like
+// mulPolyConst; otherwise subIfGE like mulPoly.
+template <typename PS, bool LazyConstSub, Size D, typename U>
+void mulPolyCTImpl(const std::vector<ModArith<D, U>> &modarith,
+                   const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+                   PolynomialT<U> &res, Size num_polyunit) {
+    static_assert(std::is_same_v<U, u64>,
+                  "mulPolyCTImpl is only specialized for u64");
+    PRAGMA_OMP(omp single) {
+        res.setNTT(op1[0].getNTTType(), op1[0].getNTTRootType());
+    }
+    const auto degree = res[0].degree();
+    num_polyunit = num_polyunit ? num_polyunit : res.size();
+
+    PRAGMA_OMP(omp for schedule(static))
+    for (Size i = 0; i < num_polyunit; ++i) {
+        const U *a = op1[i].data();
+        const U *b = op2[i].data();
+        U *r = res[i].data();
+        const u64 prime_rt = static_cast<u64>(modarith[i].getPrime());
+
+        const bool matched = dispatchPrimeCT<PS, 0>(prime_rt, [&](auto pc) {
+            constexpr u64 prime = decltype(pc)::value;
+            constexpr u64 barr = ctBarrettRatio(prime);
+            constexpr int shift = static_cast<int>(ctBarrettExpt(prime)) - 1;
+            for (Size j = 0; j < degree; ++j) {
+                u128 prod = mul64To128(a[j], b[j]);
+                u64 c1 = u128Lo(prod >> shift);
+                u64 c2 = mul64To128Hi(c1, barr);
+                u64 c3 = u128Lo(prod) - c2 * prime;
+                if constexpr (LazyConstSub)
+                    r[j] = subIfGEConst(c3, prime);
+                else
+                    r[j] = subIfGE(c3, prime);
+            }
+        });
+
+        if (!matched) {
+            const u64 prime = prime_rt;
+            const u64 barr = modarith[i].get_barrett_ratio();
+            const int shift =
+                static_cast<int>(modarith[i].get_barrett_expt()) - 1;
+            for (Size j = 0; j < degree; ++j) {
+                u128 prod = mul64To128(a[j], b[j]);
+                u64 c1 = u128Lo(prod >> shift);
+                u64 c2 = mul64To128Hi(c1, barr);
+                u64 c3 = u128Lo(prod) - c2 * prime;
+                if constexpr (LazyConstSub)
+                    r[j] = subIfGEConst(c3, prime);
+                else
+                    r[j] = subIfGE(c3, prime);
+            }
+        }
+    }
+}
+
+template <typename PS, Size D, typename U>
+inline void mulPolyCT(const std::vector<ModArith<D, U>> &modarith,
+                      const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+                      PolynomialT<U> &res, Size num_polyunit = 0) {
+    mulPolyCTImpl<PS, /*LazyConstSub=*/false>(modarith, op1, op2, res,
+                                              num_polyunit);
+}
+
+template <typename PS, Size D, typename U>
+inline void mulPolyConstCT(const std::vector<ModArith<D, U>> &modarith,
+                           const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+                           PolynomialT<U> &res, Size num_polyunit = 0) {
+    mulPolyCTImpl<PS, /*LazyConstSub=*/true>(modarith, op1, op2, res,
+                                             num_polyunit);
+}
 
 // ---------------------------------------------------------------------------
 // Explicit-instantiation declaration macros

@@ -46,6 +46,14 @@ DecryptorT<P, U>::DecryptorT(const Preset target_preset)
     for (Size i = 0; i < MAX_DECRYPT_SIZE; ++i) {
         modarith.emplace_back(degree, primes[i]);
     }
+    // Precompute the two-prime CRT constants used by decodeWithPolyPair so the
+    // modular inverses are not recomputed on every decrypt call.
+    crt_prime0_ = static_cast<U>(primes[0]);
+    crt_prime1_ = static_cast<U>(primes[1]);
+    crt_prod_prime_ = utils::mul64To128(crt_prime0_, crt_prime1_);
+    crt_half_prod_prime_ = crt_prod_prime_ >> 1;
+    crt_bezout0_ = modarith[1].inverse(crt_prime0_);
+    crt_bezout1_ = modarith[0].inverse(crt_prime1_);
 }
 
 template <Preset P, typename U>
@@ -64,6 +72,9 @@ void DecryptorT<P, U>::decrypt(const CiphertextT<U> &ctxt,
                                Real scale) const {
     if (scale == 0)
         scale = std::pow(2.0, scale_factors[ctxt[0].size() - 1]);
+    // Copy only the polyunits decryption needs, leaving the original intact.
+    // A seed-only ciphertext's released 'a' part copies as empty (its clamped
+    // size is 0); decryptInplace regenerates it from the stored seed.
     CiphertextT<U> ctxt_copy =
         ctxt.deepCopy(std::min(ctxt[0].size(), MAX_DECRYPT_SIZE));
     decryptInplace(ctxt_copy, sk, msg, scale);
@@ -80,6 +91,24 @@ void DecryptorT<P, U>::decryptInplace(CiphertextT<U> &ctxt,
     deb_assert(sk[0].size() >= ctxt[0].size(),
                "[Decryptor::decrypt] Level of secret key must be greater than "
                "or equal to ciphertext level");
+
+    // Seed-only 'a': regenerate before use. The secret-key (UNIFORM) case needs
+    // no key; the public-key (PUBLICKEY) case cannot be reconstructed here (the
+    // encryption key is not available) — the caller must complete it first.
+    if (ctxt.hasSeed() && ctxt.isAxFlushed()) {
+        if (ctxt.seedMode() != CipherSeedMode::UNIFORM) {
+            throw std::runtime_error(
+                "[Decryptor::decrypt] Cannot decrypt a public-key seed-only "
+                "ciphertext without the encryption key; call "
+                "Encryptor::completeCiphertext(ctxt, enckey) first.");
+        }
+        const utils::NTTType ntt_type_a = (ctxt.encoding() == REAL)
+                                              ? utils::NTTType::CYCLIC
+                                              : utils::NTTType::NEGACYCLIC;
+        expandUniformAxInplace(
+            ctxt[ctxt.numPoly() - 1], ctxt.getSeed(), ctxt.preset(),
+            std::min(ctxt[0].size(), MAX_DECRYPT_SIZE), ntt_type_a);
+    }
 
     if (scale == 0)
         scale = std::pow(2.0, -scale_factors[ctxt[0].size() - 1]);
@@ -129,11 +158,11 @@ DecryptorT<P, U>::innerDecrypt(const CiphertextT<U> &ctxt,
 
     PRAGMA_OMP(omp parallel) {
         u64 idx = last_idx;
-        mulPolyConst(modarith, tmp, sx, ptxt);
+        mulPolyConstP<P>(modarith, tmp, sx, ptxt);
         addPoly(modarith, ptxt, ctxt[idx], ptxt);
 
         while (idx != 0) {
-            mulPolyConst(modarith, ptxt, sx, ptxt);
+            mulPolyConstP<P>(modarith, ptxt, sx, ptxt);
             addPoly(modarith, ptxt, ctxt[--idx], ptxt);
         }
     }
@@ -279,12 +308,10 @@ void DecryptorT<P, U>::decodeWithPolyPair(const PolynomialT<U> &ptxt,
     deb_assert(coeff.size() >= ptxt_degree,
                "[Decryptor::decodeWithPolyPair] Coeff size is too small");
 
-    const U prime0 = static_cast<U>(primes[0]);
-    const U prime1 = static_cast<U>(primes[1]);
-    const utils::u128 prod_prime = utils::mul64To128(prime0, prime1);
-    const utils::u128 half_prod_prime = prod_prime >> 1;
-    const U bezout0 = modarith[1].inverse(prime0);
-    const U bezout1 = modarith[0].inverse(prime1);
+    const U prime0 = crt_prime0_;
+    const U prime1 = crt_prime1_;
+    const utils::u128 prod_prime = crt_prod_prime_;
+    const utils::u128 half_prod_prime = crt_half_prod_prime_;
 
     U *ptxt0 = ptxt[0].data();
     U *ptxt1 = ptxt[1].data();
@@ -293,27 +320,27 @@ void DecryptorT<P, U>::decodeWithPolyPair(const PolynomialT<U> &ptxt,
         modarith[0].backwardNTT(ptxt0, ptxt[0].getNTTType());
         modarith[1].backwardNTT(ptxt1, ptxt[1].getNTTType());
     }
-    modarith[0].constMultInPlace(ptxt0, bezout1);
-    modarith[1].constMultInPlace(ptxt1, bezout0);
-
-    std::vector<utils::u128> interim(full_degree);
+    modarith[0].constMultInPlace(ptxt0, crt_bezout1_);
+    modarith[1].constMultInPlace(ptxt1, crt_bezout0_);
 
     Real tmp;
     auto gap = static_cast<Size>(full_degree / ptxt_degree);
 
+    // Fuse the CRT recombination directly into the strided extraction loop:
+    // only the ptxt_degree coefficients actually read are reconstructed (for
+    // gap>1 this halves the CRT work) and the full-degree u128 scratch buffer
+    // (allocation + zero-fill + an extra memory pass) is eliminated.
     PRAGMA_OMP(omp parallel for schedule(static))
-    for (Size i = 0; i < full_degree; i++) {
-        interim[i] = utils::mul64To128(static_cast<u64>(ptxt0[i]), prime1) +
-                     utils::mul64To128(static_cast<u64>(ptxt1[i]), prime0);
-        interim[i] =
-            (interim[i] >= prod_prime) ? interim[i] - prod_prime : interim[i];
-    }
-
-    for (Size i = 0, idx = 0; i < ptxt_degree; i++, idx += gap) {
-        if (interim[idx] > half_prod_prime) {
-            tmp = -1.0 * static_cast<Real>(prod_prime - interim[idx]);
+    for (Size i = 0; i < ptxt_degree; i++) {
+        const Size idx = i * gap;
+        utils::u128 v =
+            utils::mul64To128(static_cast<u64>(ptxt0[idx]), prime1) +
+            utils::mul64To128(static_cast<u64>(ptxt1[idx]), prime0);
+        v = (v >= prod_prime) ? v - prod_prime : v;
+        if (v > half_prod_prime) {
+            tmp = -1.0 * static_cast<Real>(prod_prime - v);
         } else {
-            tmp = static_cast<Real>(interim[idx]);
+            tmp = static_cast<Real>(v);
         }
         if constexpr (std::is_same_v<CMSG, CoeffMessage>) {
             coeff[i] = tmp * scale;

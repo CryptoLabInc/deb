@@ -81,7 +81,8 @@
         "DEB_BUILD_EXAMPLES": "OFF",
         "DEB_BUILD_TEST": "OFF",
         "DEB_BUILD_BENCHMARK": "ON",
-        "DEB_BUILD_WITH_OMP": "ON"
+        "DEB_BUILD_WITH_OMP": "ON",
+	"DEB_ARCH": "x86-64-v3"
       }
     }
   ],

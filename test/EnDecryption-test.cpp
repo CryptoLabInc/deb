@@ -270,6 +270,160 @@ TEST_P(EnDecrypt, ScaleEncryptAndDecryptCoeffWithEncKey) {
 }
 
 /*---------------------------------------------------
+    Seed-only 'a' Tests
+---------------------------------------------------*/
+// Secret-key seed-only encryption: 'a' is released after encryption and the
+// decryptor transparently regenerates it from the stored seed.
+TEST_P(EnDecrypt, SeedOnlyEncryptAndDecryptWithSecretKey) {
+    MSGS msg = gen_random_message<MSGS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    MSGS decrypted_msg = gen_empty_message<MSGS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        MSGS scaled_msg = scale_message(msg, l);
+        encryptor.encrypt(scaled_msg, sk, ctxt,
+                          EncryptOptions().Level(l).SeedOnlyA(true));
+        EXPECT_TRUE(ctxt.hasSeed());
+        EXPECT_TRUE(ctxt.isAxFlushed());
+        EXPECT_EQ(static_cast<int>(ctxt.seedMode()),
+                  static_cast<int>(CipherSeedMode::UNIFORM));
+        decryptor.decrypt(ctxt, sk, decrypted_msg); // auto-expands 'a'
+        compare_msg(scaled_msg, decrypted_msg, scale_error(sk_err, l));
+    }
+}
+
+// Same fixed a_seed + error_seed must yield byte-identical ciphertexts, and the
+// regenerated 'a' from both the free function and the Encryptor member overload
+// must agree.
+TEST_P(EnDecrypt, SeedOnlyDeterministicRegeneration) {
+    MSGS msg = gen_random_message<MSGS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    RNGSeed a_seed = SeedGenerator::Gen();
+    RNGSeed e_seed = SeedGenerator::Gen();
+    auto opt = EncryptOptions().ASeed(a_seed).ErrorSeed(e_seed).SeedOnlyA(true);
+
+    Ciphertext c1(preset), c2(preset);
+    encryptor.encrypt(msg, sk, c1, opt);
+    encryptor.encrypt(msg, sk, c2, opt);
+
+    ASSERT_TRUE(c1.isAxFlushed());
+    ASSERT_TRUE(c2.isAxFlushed());
+    EXPECT_TRUE(c1.getSeed() == a_seed); // stored seed is the supplied one
+
+    completeCiphertext(c1);           // free function (UNIFORM)
+    encryptor.completeCiphertext(c2); // member overload (delegates)
+    ASSERT_FALSE(c1.isAxFlushed());
+    ASSERT_FALSE(c2.isAxFlushed());
+    ASSERT_EQ(c1.numPoly(), c2.numPoly());
+    for (Size p = 0; p < c1.numPoly(); ++p) {
+        comparePoly(c1[p], c2[p]); // b parts and regenerated a part identical
+    }
+}
+
+// Public-key seed-only encryption: 'a' = v*ax + e cannot be regenerated without
+// the encryption key, so the decryptor must refuse and
+// completeCiphertext(enckey) is required first.
+TEST_P(EnDecrypt, SeedOnlyEncryptAndDecryptWithEncKey) {
+    MSGS msg = gen_random_message<MSGS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    SwitchKey enckey = KeyGenerator(preset).genEncKey(sk);
+    MSGS decrypted_msg = gen_empty_message<MSGS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        MSGS scaled_msg = scale_message(msg, l);
+        encryptor.encrypt(scaled_msg, enckey, ctxt,
+                          EncryptOptions().Level(l).SeedOnlyA(true));
+        EXPECT_TRUE(ctxt.hasSeed());
+        EXPECT_TRUE(ctxt.isAxFlushed());
+        EXPECT_EQ(static_cast<int>(ctxt.seedMode()),
+                  static_cast<int>(CipherSeedMode::PUBLICKEY));
+
+        MSGS tmp = gen_empty_message<MSGS>();
+        EXPECT_THROW(decryptor.decrypt(ctxt, sk, tmp), std::runtime_error);
+
+        encryptor.completeCiphertext(ctxt, enckey);
+        EXPECT_FALSE(ctxt.isAxFlushed());
+        decryptor.decrypt(ctxt, sk, decrypted_msg);
+        compare_msg(scaled_msg, decrypted_msg, scale_error(enc_err, l));
+    }
+}
+
+// Public-key path is deterministic from (a_seed, error_seed, enckey).
+TEST_P(EnDecrypt, SeedOnlyEncKeyDeterministicRegeneration) {
+    MSGS msg = gen_random_message<MSGS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    SwitchKey enckey = KeyGenerator(preset).genEncKey(sk);
+    RNGSeed a_seed = SeedGenerator::Gen();
+    RNGSeed e_seed = SeedGenerator::Gen();
+    auto opt = EncryptOptions().ASeed(a_seed).ErrorSeed(e_seed).SeedOnlyA(true);
+
+    Ciphertext c1(preset), c2(preset);
+    encryptor.encrypt(msg, enckey, c1, opt);
+    encryptor.encrypt(msg, enckey, c2, opt);
+    encryptor.completeCiphertext(c1, enckey);
+    encryptor.completeCiphertext(c2, enckey);
+
+    ASSERT_EQ(c1.numPoly(), c2.numPoly());
+    for (Size p = 0; p < c1.numPoly(); ++p) {
+        comparePoly(c1[p], c2[p]);
+    }
+}
+
+// Seed-only with ntt_out == false: the stored 'b' is in the coefficient domain
+// and the regenerated 'a' must follow it.
+TEST_P(EnDecrypt, SeedOnlyNttOutFalseWithSecretKey) {
+    MSGS msg = gen_random_message<MSGS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    MSGS decrypted_msg = gen_empty_message<MSGS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        MSGS scaled_msg = scale_message(msg, l);
+        encryptor.encrypt(
+            scaled_msg, sk, ctxt,
+            EncryptOptions().Level(l).NTTOut(false).SeedOnlyA(true));
+        EXPECT_TRUE(ctxt.isAxFlushed());
+        EXPECT_FALSE(ctxt[0][0].isNTT()); // 'b' is in coefficient domain
+
+        // Auto-expand decrypt works (the decryptor handles mixed domains).
+        decryptor.decrypt(ctxt, sk, decrypted_msg);
+        compare_msg(scaled_msg, decrypted_msg, scale_error(sk_err, l));
+
+        // Explicit completion regenerates 'a' in the same (coefficient) domain.
+        completeCiphertext(ctxt);
+        ASSERT_FALSE(ctxt.isAxFlushed());
+        EXPECT_EQ(ctxt[ctxt.numPoly() - 1][0].isNTT(), ctxt[0][0].isNTT());
+    }
+}
+
+TEST_P(EnDecrypt, SeedOnlyNttOutFalseWithEncKey) {
+    MSGS msg = gen_random_message<MSGS>();
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    SwitchKey enckey = KeyGenerator(preset).genEncKey(sk);
+    MSGS decrypted_msg = gen_empty_message<MSGS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        MSGS scaled_msg = scale_message(msg, l);
+        encryptor.encrypt(
+            scaled_msg, enckey, ctxt,
+            EncryptOptions().Level(l).NTTOut(false).SeedOnlyA(true));
+        EXPECT_FALSE(ctxt[0][0].isNTT());
+
+        MSGS tmp = gen_empty_message<MSGS>();
+        EXPECT_THROW(decryptor.decrypt(ctxt, sk, tmp), std::runtime_error);
+
+        encryptor.completeCiphertext(ctxt, enckey);
+        ASSERT_FALSE(ctxt.isAxFlushed());
+        EXPECT_EQ(ctxt[ctxt.numPoly() - 1][0].isNTT(), ctxt[0][0].isNTT());
+        decryptor.decrypt(ctxt, sk, decrypted_msg);
+        compare_msg(scaled_msg, decrypted_msg, scale_error(enc_err, l));
+    }
+}
+
+/*---------------------------------------------------
     Real Encryption Tests
 ---------------------------------------------------*/
 class RealEnDecrypt : public DebTestBase {
@@ -452,6 +606,34 @@ TEST_P(RealEnDecrypt, EncryptAndDecryptFloatCoeffWithEncKey) {
                           EncryptOptions().Level(l).RealEncrypt(true));
         decryptor.decrypt(ctxt, sk, decrypted_coeff);
         compare_coeff(coeff, decrypted_coeff, scale_error(enc_err_f, l));
+    }
+}
+
+// Seed-only 'a' with real (CYCLIC NTT) encoding: regeneration must stamp the
+// CYCLIC kind derived from encoding()==REAL.
+TEST_P(RealEnDecrypt, SeedOnlyEncryptAndDecryptWithSecretKey) {
+    MSGS msg = gen_empty_real_message<MSGS>();
+    for (Size s = 0; s < num_secret; ++s) {
+        for (Size j = 0; j < degree; ++j) {
+            msg[s][j].real(dist(gen));
+            msg[s][j].imag(0.0);
+        }
+    }
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset, std::nullopt,
+                                                    utils::NTTType::CYCLIC);
+    MSGS decrypted_msg = gen_empty_real_message<MSGS>();
+
+    for (Size l = 0; l < get_num_p(preset); ++l) {
+        Ciphertext ctxt(preset, l);
+        MSGS scaled_msg = scale_complex_message(msg, l);
+        encryptor.encrypt(
+            scaled_msg, sk, ctxt,
+            EncryptOptions().Level(l).RealEncrypt(true).SeedOnlyA(true));
+        EXPECT_EQ(static_cast<int>(ctxt.seedMode()),
+                  static_cast<int>(CipherSeedMode::UNIFORM));
+        EXPECT_EQ(static_cast<int>(ctxt.encoding()), static_cast<int>(REAL));
+        decryptor.decrypt(ctxt, sk, decrypted_msg); // auto-expands CYCLIC 'a'
+        compare_heaan_msg(scaled_msg, decrypted_msg, scale_error(sk_err, l));
     }
 }
 

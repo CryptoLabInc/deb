@@ -20,6 +20,11 @@ cpmaddpackage(URI "gh:google/benchmark@1.9.4" OPTIONS
 add_executable(deb-benchmark benchmark.cpp)
 target_link_libraries(deb-benchmark PRIVATE deb benchmark::benchmark_main)
 
+# Standalone A/B benchmark: compile-time-preset (templated) vs runtime-preset.
+# No google/benchmark dependency, so it builds even offline.
+add_executable(deb-bench-ct-vs-rt bench_ct_vs_rt.cpp)
+target_link_libraries(deb-bench-ct-vs-rt PRIVATE deb)
+
 enable_language(C)
 cpmaddpackage(
   NAME

@@ -33,6 +33,9 @@ target_link_libraries(EnDecryption-MultiSecret
 add_executable(SeedOnlySecretKey SeedOnlySecretKey.cpp)
 target_link_libraries(SeedOnlySecretKey PRIVATE ${${PROJECT_NAME}_example})
 
+add_executable(SeedOnlyCiphertext SeedOnlyCiphertext.cpp)
+target_link_libraries(SeedOnlyCiphertext PRIVATE ${${PROJECT_NAME}_example})
+
 add_executable(KeyGeneration KeyGeneration.cpp)
 target_link_libraries(KeyGeneration PRIVATE ${${PROJECT_NAME}_example})
 

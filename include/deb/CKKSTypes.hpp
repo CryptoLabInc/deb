@@ -337,6 +337,24 @@ private:
 // =========================================================================
 
 /**
+ * @brief Describes how a ciphertext's @c a part (the last-index polynomial) is
+ * reproduced from a stored seed.
+ *
+ * A freshly-encrypted ciphertext keeps its @c a polynomial fully allocated.
+ * When seed-only mode is requested at encryption time the @c a storage is
+ * released (see @ref CiphertextT::flushAx) and only the RNG seed is retained;
+ * @c a is then regenerated on demand via @ref completeCiphertext / @ref
+ * EncryptorT::completeCiphertext.
+ */
+enum class CipherSeedMode : u8 {
+    NONE = 0, /**< Not seed-compressed; @c a is stored in full. */
+    UNIFORM =
+        1, /**< Secret-key origin: @c a is a uniform sample of the seed. */
+    PUBLICKEY = 2, /**< Public-key origin: @c a = v*ax + e; expanding requires
+                      the encryption key. */
+};
+
+/**
  * @brief Container for encrypted polynomials across modulus levels.
  *
  * @tparam U Coefficient word type (u32 or u64, default u64).
@@ -408,6 +426,43 @@ public:
      * @brief Returns number of component polynomials.
      */
     Size numPoly() const noexcept;
+
+    // --- Seed-only @c a support -------------------------------------------
+    /**
+     * @brief True if a seed for regenerating the @c a part is stored.
+     */
+    bool hasSeed() const noexcept;
+    /**
+     * @brief Returns the stored seed (throws via std::optional if absent).
+     */
+    RNGSeed getSeed() const;
+    /**
+     * @brief Stores the seed used to (re)generate the @c a part.
+     */
+    void setSeed(const RNGSeed &seed) noexcept;
+    /**
+     * @brief Drops the stored seed (does not touch polynomial storage).
+     */
+    void flushSeed() noexcept;
+    /**
+     * @brief Returns how the @c a part is reproduced from the seed.
+     */
+    CipherSeedMode seedMode() const noexcept;
+    /**
+     * @brief Records how the @c a part is reproduced from the seed.
+     */
+    void setSeedMode(CipherSeedMode mode) noexcept;
+    /**
+     * @brief Releases the storage of the @c a part (the last-index polynomial),
+     * keeping only the seed. Requires a stored seed.
+     */
+    void flushAx();
+    /**
+     * @brief True if the @c a part storage has been released (seed-only form).
+     * This checks the size of the @c a polynomial.
+     */
+    bool isAxFlushed() const noexcept;
+
     /**
      * @brief Mutable polynomial accessor.
      */
@@ -431,6 +486,8 @@ private:
     Preset preset_;
     EncodingType encoding_;
     std::vector<PolynomialT<U>> polys_;
+    std::optional<RNGSeed> seed_;
+    CipherSeedMode seed_mode_ = CipherSeedMode::NONE;
 };
 
 // =========================================================================
@@ -458,7 +515,7 @@ public:
 
     Preset preset() const noexcept;
     bool hasSeed() const noexcept;
-    RNGSeed getSeed() const noexcept;
+    RNGSeed getSeed() const;
     void setSeed(const RNGSeed &seed) noexcept;
     void flushSeed() noexcept;
 
@@ -597,5 +654,50 @@ inline U *getData(const PolynomialT<U> &poly, const Size polyunit_idx) {
 template <typename U = u64> inline U getData(const U *data, const Size idx) {
     return data[idx];
 }
+
+// =========================================================================
+// Seed-only @c a regeneration helper
+// =========================================================================
+
+/**
+ * @brief Regenerates a uniform-random @c a polynomial in place from a seed.
+ *
+ * Fills @p ax with @p num_polyunit per-prime polyunits drawn (in ascending
+ * index order, each in range @c primes[i]) from a fresh RNG seeded with @p
+ * seed. A uniform sample is, by convention, already its own NTT representation,
+ * so when @p to_ntt is true the units are simply marked as NTT-domain with
+ * @p ntt_type / @p root_type (no transform). When @p to_ntt is false the units
+ * are inverse-transformed to the coefficient domain and marked NONNTT, matching
+ * a ciphertext serialized with @c ntt_out==false. Used to reconstruct the @c a
+ * part of a secret-key (UNIFORM) seed-only ciphertext.
+ *
+ * @param ax Polynomial to (re)allocate and fill.
+ * @param seed Seed that originally produced @c a.
+ * @param preset Preset providing primes and degree.
+ * @param num_polyunit Number of per-prime polyunits to regenerate.
+ * @param ntt_type NTT kind (NEGACYCLIC, or CYCLIC for real encoding).
+ * @param root_type NTT root metadata.
+ * @param to_ntt Leave @c a in the NTT domain (true) or bring it to the
+ * coefficient domain (false) to match a non-NTT ciphertext.
+ */
+template <typename U = u64>
+void expandUniformAxInplace(
+    PolynomialT<U> &ax, const RNGSeed &seed, Preset preset, Size num_polyunit,
+    utils::NTTType ntt_type,
+    utils::NTTRootType root_type = utils::getGlobalNTTRootType(),
+    bool to_ntt = true);
+
+#ifdef DEB_U64
+extern template void expandUniformAxInplace<u64>(PolynomialT<u64> &,
+                                                 const RNGSeed &, Preset, Size,
+                                                 utils::NTTType,
+                                                 utils::NTTRootType, bool);
+#endif
+#ifdef DEB_U32
+extern template void expandUniformAxInplace<u32>(PolynomialT<u32> &,
+                                                 const RNGSeed &, Preset, Size,
+                                                 utils::NTTType,
+                                                 utils::NTTRootType, bool);
+#endif
 
 } // namespace deb
