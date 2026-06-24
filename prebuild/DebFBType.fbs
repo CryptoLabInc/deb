@@ -33,7 +33,7 @@ table Coeff32 {
 table PolyUnit {
     prime:uint64;
     degree:uint32;
-    ntt_info:int32;
+    ntt_info:int8;
     array:[uint64];
 }
 
@@ -43,22 +43,24 @@ table Poly {
 }
 
 table Cipher {
-    preset:uint32;
-    encoding:uint32;
+    preset:uint8;
+    encoding:uint8;
     size:uint32;
     bigpolys:[Poly];
+    seed:[uint64];
+    seed_mode:uint8;
 }
 
 table Sk {
-    preset:uint32;
-    seeds:[uint64];
+    preset:uint8;
+    seed:[uint64];
     coeffs:[int8];
     bigpolys:[Poly];
 }
 
 table Swk {
-    preset:uint32;
-    type:uint32;
+    preset:uint8;
+    type:uint8;
     rot_idx:uint32;
     dnum:uint32;
     ax:[Poly];

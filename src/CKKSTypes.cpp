@@ -316,7 +316,14 @@ CiphertextT<U>::deepCopy(std::optional<Size> num_polyunit) const {
     CiphertextT<U> copy(*this);
     copy.polys_.clear();
     for (const auto &poly : polys_) {
-        copy.polys_.emplace_back(poly.deepCopy(num_polyunit));
+        // Clamp the request to what each polynomial actually holds: a seed-only
+        // ciphertext's released 'a' poly has size 0, so it copies as empty
+        // (later regenerated from the seed) instead of over-requesting.
+        const std::optional<Size> poly_num =
+            num_polyunit
+                ? std::optional<Size>(std::min(*num_polyunit, poly.size()))
+                : std::nullopt;
+        copy.polys_.emplace_back(poly.deepCopy(poly_num));
     }
     return copy;
 }
@@ -370,6 +377,50 @@ template <typename U> Size CiphertextT<U>::numPoly() const noexcept {
     return static_cast<Size>(polys_.size());
 }
 
+template <typename U> bool CiphertextT<U>::hasSeed() const noexcept {
+    return seed_.has_value();
+}
+
+template <typename U> RNGSeed CiphertextT<U>::getSeed() const {
+    return seed_.value();
+}
+
+template <typename U>
+void CiphertextT<U>::setSeed(const RNGSeed &seed) noexcept {
+    seed_.emplace(seed);
+}
+
+template <typename U> void CiphertextT<U>::flushSeed() noexcept {
+    seed_.reset();
+}
+
+template <typename U> CipherSeedMode CiphertextT<U>::seedMode() const noexcept {
+    return seed_mode_;
+}
+
+template <typename U>
+void CiphertextT<U>::setSeedMode(CipherSeedMode mode) noexcept {
+    seed_mode_ = mode;
+}
+
+template <typename U> void CiphertextT<U>::flushAx() {
+    if (!seed_.has_value()) {
+        throw std::runtime_error(
+            "[CiphertextT::flushAx] Cannot release the 'a' part without a "
+            "stored seed to regenerate it.");
+    }
+    if (polys_.empty()) {
+        return;
+    }
+    // Replace the last-index polynomial with an empty one; the shared_ptr
+    // reassignment frees the previous coefficient storage.
+    polys_[numPoly() - 1] = PolynomialT<U>(preset_, Size(0));
+}
+
+template <typename U> bool CiphertextT<U>::isAxFlushed() const noexcept {
+    return !polys_.empty() && polys_[numPoly() - 1].size() == 0;
+}
+
 // ---------------------------------------------------------------------
 // Implementation of SecretKeyT<U>
 // ---------------------------------------------------------------------
@@ -419,7 +470,7 @@ template <typename U> bool SecretKeyT<U>::hasSeed() const noexcept {
     return seed_.has_value();
 }
 
-template <typename U> RNGSeed SecretKeyT<U>::getSeed() const noexcept {
+template <typename U> RNGSeed SecretKeyT<U>::getSeed() const {
     return seed_.value();
 }
 
@@ -624,17 +675,61 @@ const PolynomialT<U> &SwitchKeyT<U>::bx(Size index) const noexcept {
     return bx_[index];
 }
 
+// ---------------------------------------------------------------------
+// Seed-only @c a regeneration helper
+// ---------------------------------------------------------------------
+template <typename U>
+void expandUniformAxInplace(PolynomialT<U> &ax, const RNGSeed &seed,
+                            const Preset preset, const Size num_polyunit,
+                            const utils::NTTType ntt_type,
+                            const utils::NTTRootType root_type,
+                            const bool to_ntt) {
+    const Size degree = get_degree(preset);
+    auto rng = createRandomGenerator(seed);
+    // Reallocate to exactly num_polyunit per-prime units (prime[i] per unit).
+    ax = PolynomialT<U>(preset, num_polyunit);
+    for (Size i = 0; i < num_polyunit; ++i) {
+        const u64 prime = get_primes(preset)[i];
+        // Draw in ascending index order to match encryption's stream exactly.
+        if constexpr (sizeof(U) == sizeof(u64)) {
+            rng->getRandomUint64ArrayInRange(ax[i].data(), degree, prime);
+        } else {
+            std::vector<u64> tmp(degree);
+            rng->getRandomUint64ArrayInRange(tmp.data(), degree, prime);
+            for (Size j = 0; j < degree; ++j) {
+                ax[i][j] = static_cast<U>(tmp[j]);
+            }
+        }
+        if (to_ntt) {
+            // Uniform sample is already its own NTT representation.
+            ax[i].setNTT(ntt_type, root_type);
+        } else {
+            // Bring 'a' to the coefficient domain to match a ntt_out==false
+            // ciphertext (this is exactly backwardNTT of the uniform NTT 'a').
+            auto ntt = utils::createNTT<U>(degree, prime, ntt_type, root_type);
+            ntt->computeBackward(ax[i].data());
+            ax[i].setNTT(utils::NTTType::NONNTT);
+        }
+    }
+}
+
 // Explicit instantiations
 #ifdef DEB_U64
 #define X(TYPE) template class TYPE##T<u64>;
 DEB_DATASTRUCTURES
 #undef X
+template void expandUniformAxInplace<u64>(PolynomialT<u64> &, const RNGSeed &,
+                                          Preset, Size, utils::NTTType,
+                                          utils::NTTRootType, bool);
 #endif
 
 #ifdef DEB_U32
 #define X(TYPE) template class TYPE##T<u32>;
 DEB_DATASTRUCTURES
 #undef X
+template void expandUniformAxInplace<u32>(PolynomialT<u32> &, const RNGSeed &,
+                                          Preset, Size, utils::NTTType,
+                                          utils::NTTRootType, bool);
 #endif
 
 } // namespace deb

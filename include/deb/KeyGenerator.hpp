@@ -43,12 +43,12 @@ public:
      * @brief Builds a key generator for a preset when no secret key is
      * provided. An external secret key must be given for key generation calls.
      * @param target_preset Target preset whose parameters drive key sizes.
-     * @param seeds Optional deterministic RNG seed material used when new
+     * @param seed Optional deterministic RNG seed material used when new
      * samples are required.
      */
-    explicit KeyGeneratorT(std::optional<const RNGSeed> seeds = std::nullopt);
+    explicit KeyGeneratorT(std::optional<const RNGSeed> seed = std::nullopt);
     explicit KeyGeneratorT(const Preset target_preset,
-                           std::optional<const RNGSeed> seeds = std::nullopt);
+                           std::optional<const RNGSeed> seed = std::nullopt);
     /**
      * @brief Builds a key generator with a custom random generator.
      * @param target_preset Target preset whose parameters drive key sizes.

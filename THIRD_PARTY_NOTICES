@@ -1,21 +1,29 @@
-This project includes third-party libraries:
+This library incorporates third-party components, which are
+distributed under the licenses listed below.
 
-- alea (Apache License)
-  Copyright © 2025 CryptoLab, Inc.
+## License Texts
+
+The full text of each license referenced below is included in the
+external/ directory of this distribution.
+
+## Open Source Software
+
+- alea (Apache License 2.0)
+  Copyright © 2025-2026 CryptoLab, Inc.
   https://github.com/CryptoLabInc/alea
 
 - nlohmann/json (MIT License)
   Copyright © 2013-2025 Niels Lohmann
   https://github.com/nlohmann/json
 
-- flatbuffers (Apache License)
-  Copyright © 2021 Google Inc.
+- flatbuffers (Apache License 2.0)
+  Copyright © 2014 Google Inc.
   https://github.com/google/flatbuffers
 
-- googletest (Apache License)
-  Copyright © 2021 Google Inc.
+- googletest (BSD 3-Clause)
+  Copyright © 2008 Google Inc.
   https://github.com/google/googletest
 
-- benchmark (Apache License)
-  Copyright © 2021 Google Inc.
+- benchmark (Apache License 2.0)
+  Copyright © 2015 Google Inc.
   https://github.com/google/benchmark

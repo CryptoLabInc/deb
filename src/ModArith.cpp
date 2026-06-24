@@ -192,10 +192,15 @@ void backwardNTT(const std::vector<ModArith<D, U>> &modarith,
 // Polynomial arithmetic
 // ---------------------------------------------------------------------------
 
-template <Size D, typename U>
-void addPoly(const std::vector<ModArith<D, U>> &modarith,
-             const PolynomialT<U> &op1, const PolynomialT<U> &op2,
-             PolynomialT<U> &res, Size num_polyunit) {
+// Shared body for addPoly / addPolyConst.  They differ only in the modular
+// reduction: `LazyConstSub` selects the branch-free subIfGEConst
+// (addPolyConst), otherwise the branching subIfGE (addPoly).  Selection is a
+// compile-time constant resolved by `if constexpr`, so each instantiation
+// generates the same machine code as a hand-written separate function.
+template <bool LazyConstSub, Size D, typename U>
+static void addPolyImpl(const std::vector<ModArith<D, U>> &modarith,
+                        const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+                        PolynomialT<U> &res, Size num_polyunit) {
     deb_assert(op1[0].isNTT() == op2[0].isNTT(),
                "[addPoly] operands NTT state mismatch");
     PRAGMA_OMP(omp single) {
@@ -205,35 +210,37 @@ void addPoly(const std::vector<ModArith<D, U>> &modarith,
     const auto degree = res[0].degree();
     num_polyunit = num_polyunit ? num_polyunit : res.size();
 
-    PRAGMA_OMP(omp for collapse(2) schedule(static))
+    // Outer worksharing over polyunits; the inner coefficient loop is a clean
+    // affine loop over raw pointers with the prime hoisted, so it
+    // auto-vectorizes (collapse(2) defeats that and forces per-element index
+    // recovery).
+    PRAGMA_OMP(omp for schedule(static))
     for (Size i = 0; i < num_polyunit; ++i) {
+        const U prime = modarith[i].getPrime();
+        const U *a = op1[i].data();
+        const U *b = op2[i].data();
+        U *r = res[i].data();
         for (Size j = 0; j < degree; ++j) {
-            res[i][j] = subIfGE(static_cast<U>(op1[i][j] + op2[i][j]),
-                                modarith[i].getPrime());
+            if constexpr (LazyConstSub)
+                r[j] = subIfGEConst(static_cast<U>(a[j] + b[j]), prime);
+            else
+                r[j] = subIfGE(static_cast<U>(a[j] + b[j]), prime);
         }
     }
+}
+
+template <Size D, typename U>
+void addPoly(const std::vector<ModArith<D, U>> &modarith,
+             const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+             PolynomialT<U> &res, Size num_polyunit) {
+    addPolyImpl</*LazyConstSub=*/false>(modarith, op1, op2, res, num_polyunit);
 }
 
 template <Size D, typename U>
 void addPolyConst(const std::vector<ModArith<D, U>> &modarith,
                   const PolynomialT<U> &op1, const PolynomialT<U> &op2,
                   PolynomialT<U> &res, Size num_polyunit) {
-    deb_assert(op1[0].isNTT() == op2[0].isNTT(),
-               "[addPoly] operands NTT state mismatch");
-    PRAGMA_OMP(omp single) {
-        res.setNTT(op1[0].getNTTType(), op1[0].getNTTRootType());
-    }
-
-    const auto degree = res[0].degree();
-    num_polyunit = num_polyunit ? num_polyunit : res.size();
-
-    PRAGMA_OMP(omp for collapse(2) schedule(static))
-    for (Size i = 0; i < num_polyunit; ++i) {
-        for (Size j = 0; j < degree; ++j) {
-            res[i][j] = subIfGEConst(static_cast<U>(op1[i][j] + op2[i][j]),
-                                     modarith[i].getPrime());
-        }
-    }
+    addPolyImpl</*LazyConstSub=*/true>(modarith, op1, op2, res, num_polyunit);
 }
 
 template <Size D, typename U>
@@ -249,14 +256,79 @@ void subPoly(const std::vector<ModArith<D, U>> &modarith,
     const auto degree = res[0].degree();
     num_polyunit = num_polyunit ? num_polyunit : res.size();
 
-    PRAGMA_OMP(omp for collapse(2) schedule(static))
+    PRAGMA_OMP(omp for schedule(static))
     for (Size i = 0; i < num_polyunit; ++i) {
+        const U prime = modarith[i].getPrime();
+        const U *a = op1[i].data();
+        const U *b = op2[i].data();
+        U *r = res[i].data();
         for (Size j = 0; j < degree; ++j) {
-            const U tmp = static_cast<U>(op1[i][j] - op2[i][j]);
-            // mask is all-ones if op1[i][j] < op2[i][j], 0 otherwise
+            const U tmp = static_cast<U>(a[j] - b[j]);
+            // mask is all-ones if a[j] < b[j], 0 otherwise
             const U mask = static_cast<U>(
                 ~((tmp >> (UnitTypeTraits<U>::bits - 1)) - U(1)));
-            res[i][j] = static_cast<U>(tmp + (modarith[i].getPrime() & mask));
+            r[j] = static_cast<U>(tmp + (prime & mask));
+        }
+    }
+}
+
+// Shared body for mulPoly / mulPolyConst.  The two differ only in the final
+// modular reduction: `LazyConstSub` selects the branch-free subIfGEConst
+// (mulPolyConst), otherwise the branching subIfGE (mulPoly).  Selection is a
+// compile-time constant resolved by `if constexpr`, so each instantiation
+// generates the same machine code as a hand-written separate function.
+template <bool LazyConstSub, Size D, typename U>
+static void mulPolyImpl(const std::vector<ModArith<D, U>> &modarith,
+                        const PolynomialT<U> &op1, const PolynomialT<U> &op2,
+                        PolynomialT<U> &res, Size num_polyunit) {
+    deb_assert(op1[0].isNTT() == op2[0].isNTT(),
+               "[mulPoly] operands NTT state mismatch");
+    PRAGMA_OMP(omp single) {
+        res.setNTT(op1[0].getNTTType(), op1[0].getNTTRootType());
+    }
+
+    const auto degree = res[0].degree();
+    num_polyunit = num_polyunit ? num_polyunit : res.size();
+
+    if constexpr (std::is_same_v<U, u64>) {
+        PRAGMA_OMP(omp for schedule(static))
+        for (Size i = 0; i < num_polyunit; ++i) {
+            const u64 prime = static_cast<u64>(modarith[i].getPrime());
+            const u64 barr = modarith[i].get_barrett_ratio();
+            const int shift =
+                static_cast<int>(modarith[i].get_barrett_expt()) - 1;
+            const U *a = op1[i].data();
+            const U *b = op2[i].data();
+            U *r = res[i].data();
+            for (Size j = 0; j < degree; ++j) {
+                u128 prod = mul64To128(a[j], b[j]);
+                u64 c1 = u128Lo(prod >> shift);
+                u64 c2 = mul64To128Hi(c1, barr);
+                u64 c3 = u128Lo(prod) - c2 * prime;
+                if constexpr (LazyConstSub)
+                    r[j] = subIfGEConst(c3, prime);
+                else
+                    r[j] = subIfGE(c3, prime);
+            }
+        }
+    } else {
+        // U = u32
+        PRAGMA_OMP(omp for schedule(static))
+        for (Size i = 0; i < num_polyunit; ++i) {
+            const u64 barr = modarith[i].get_barrett_ratio_for_u64();
+            const u64 prime64 = static_cast<u64>(modarith[i].getPrime());
+            const U *a = op1[i].data();
+            const U *b = op2[i].data();
+            U *r = res[i].data();
+            for (Size j = 0; j < degree; ++j) {
+                u64 prod = static_cast<u64>(a[j]) * b[j];
+                u64 q = mul64To128Hi(prod, barr);
+                u64 rr = prod - q * prime64;
+                if constexpr (LazyConstSub)
+                    r[j] = static_cast<U>(subIfGEConst<u64>(rr, prime64));
+                else
+                    r[j] = static_cast<U>(subIfGE<u64>(rr, prime64));
+            }
         }
     }
 }
@@ -265,80 +337,14 @@ template <Size D, typename U>
 void mulPoly(const std::vector<ModArith<D, U>> &modarith,
              const PolynomialT<U> &op1, const PolynomialT<U> &op2,
              PolynomialT<U> &res, Size num_polyunit) {
-    deb_assert(op1[0].isNTT() == op2[0].isNTT(),
-               "[mulPoly] operands NTT state mismatch");
-    PRAGMA_OMP(omp single) {
-        res.setNTT(op1[0].getNTTType(), op1[0].getNTTRootType());
-    }
-
-    const auto degree = res[0].degree();
-    num_polyunit = num_polyunit ? num_polyunit : res.size();
-
-    if constexpr (std::is_same_v<U, u64>) {
-        PRAGMA_OMP(omp for collapse(2) schedule(static))
-        for (Size i = 0; i < num_polyunit; ++i) {
-            for (Size j = 0; j < degree; ++j) {
-                u128 prod = mul64To128(op1[i][j], op2[i][j]);
-                u64 c1 = u128Lo(prod >> (modarith[i].get_barrett_expt() - 1));
-                u64 c2 = mul64To128Hi(c1, modarith[i].get_barrett_ratio());
-                u64 c3 = u128Lo(prod) - c2 * modarith[i].getPrime();
-                res[i][j] = subIfGE(c3, modarith[i].getPrime());
-            }
-        }
-    } else {
-        // U = u32
-        PRAGMA_OMP(omp for schedule(static))
-        for (Size i = 0; i < num_polyunit; ++i) {
-            const u64 barr = modarith[i].get_barrett_ratio_for_u64();
-            const u64 prime64 = static_cast<u64>(modarith[i].getPrime());
-            for (Size j = 0; j < degree; ++j) {
-                u64 prod = static_cast<u64>(op1[i][j]) * op2[i][j];
-                u64 q = mul64To128Hi(prod, barr);
-                u64 r = prod - q * prime64;
-                res[i][j] = static_cast<U>(subIfGE<u64>(r, prime64));
-            }
-        }
-    }
+    mulPolyImpl</*LazyConstSub=*/false>(modarith, op1, op2, res, num_polyunit);
 }
 
 template <Size D, typename U>
 void mulPolyConst(const std::vector<ModArith<D, U>> &modarith,
                   const PolynomialT<U> &op1, const PolynomialT<U> &op2,
                   PolynomialT<U> &res, Size num_polyunit) {
-    deb_assert(op1[0].isNTT() == op2[0].isNTT(),
-               "[mulPoly] operands NTT state mismatch");
-    PRAGMA_OMP(omp single) {
-        res.setNTT(op1[0].getNTTType(), op1[0].getNTTRootType());
-    }
-
-    const auto degree = res[0].degree();
-    num_polyunit = num_polyunit ? num_polyunit : res.size();
-
-    if constexpr (std::is_same_v<U, u64>) {
-        PRAGMA_OMP(omp for collapse(2) schedule(static))
-        for (Size i = 0; i < num_polyunit; ++i) {
-            for (Size j = 0; j < degree; ++j) {
-                u128 prod = mul64To128(op1[i][j], op2[i][j]);
-                u64 c1 = u128Lo(prod >> (modarith[i].get_barrett_expt() - 1));
-                u64 c2 = mul64To128Hi(c1, modarith[i].get_barrett_ratio());
-                u64 c3 = u128Lo(prod) - c2 * modarith[i].getPrime();
-                res[i][j] = subIfGEConst(c3, modarith[i].getPrime());
-            }
-        }
-    } else {
-        // U = u32
-        PRAGMA_OMP(omp for schedule(static))
-        for (Size i = 0; i < num_polyunit; ++i) {
-            const u64 barr = modarith[i].get_barrett_ratio_for_u64();
-            const u64 prime64 = static_cast<u64>(modarith[i].getPrime());
-            for (Size j = 0; j < degree; ++j) {
-                u64 prod = static_cast<u64>(op1[i][j]) * op2[i][j];
-                u64 q = mul64To128Hi(prod, barr);
-                u64 r = prod - q * prime64;
-                res[i][j] = static_cast<U>(subIfGEConst<u64>(r, prime64));
-            }
-        }
-    }
+    mulPolyImpl</*LazyConstSub=*/true>(modarith, op1, op2, res, num_polyunit);
 }
 
 template <Size D, typename U>

@@ -17,7 +17,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(
   deb
-  VERSION 0.4.0
+  VERSION 0.4.1
   LANGUAGES CXX
   DESCRIPTION "CryptoLab's official cryptosystem library for FHE.")
 
@@ -207,14 +207,25 @@ if(DEB_BUILD_DOXYGEN)
     doxygen_add_docs(
       deb_doc
       ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/CKKSTypes.hpp
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/Constant.hpp
-      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/Context.hpp
       ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/Decryptor.hpp
       ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/Encryptor.hpp
       ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/KeyGenerator.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/Preset.hpp
       ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/SecretKeyGenerator.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/SeedGenerator.hpp
       ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/Serialize.hpp
       ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/Types.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/utils/AleaRandomGenerator.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/utils/Basic.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/utils/Constant.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/utils/FFT.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/utils/Macro.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/utils/ModArith.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/utils/NTT.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/utils/NTTConfig.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/utils/OmpUtils.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/utils/PresetTraits.hpp
+      ${CMAKE_CURRENT_SOURCE_DIR}/include/deb/utils/RandomGenerator.hpp
       ${CMAKE_CURRENT_SOURCE_DIR}/README.md
       ALL
       COMMENT "Generate documentation with Doxygen")

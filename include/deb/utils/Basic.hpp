@@ -34,6 +34,19 @@ namespace deb::utils {
 // ---------------------------------------------------------------------------
 #ifdef _MSC_VER
 
+// On runtime paths we use MSVC's hardware intrinsics (_umul128, __umulh,
+// _udiv128) for 64x64->128 multiply and 128/64 divide.  These are *not*
+// usable in a constant-expression, so we fall back to the portable
+// schoolbook/long-division code when the operator is evaluated at compile
+// time.  __builtin_is_constant_evaluated() (available since VS 2019 16.5)
+// lets us keep the operators `constexpr` while still getting the fast
+// hardware path at runtime.  Older compilers degrade to the portable path.
+#if defined(__cpp_lib_is_constant_evaluated) || (_MSC_VER >= 1925)
+#define DEB_IS_CONST_EVAL() __builtin_is_constant_evaluated()
+#else
+#define DEB_IS_CONST_EVAL() (true)
+#endif
+
 struct i128; // forward declaration
 
 struct u128 {
@@ -95,8 +108,17 @@ struct u128 {
         return u128(hi - o.hi - (lo < o.lo ? 1 : 0), r);
     }
 
-    // Multiplication – schoolbook 32-bit (constexpr-compatible).
+    // Multiplication – hardware intrinsic at runtime, schoolbook 32-bit
+    // when constant-evaluated.
     constexpr u128 operator*(const u128 &o) const {
+#if defined(_M_X64) || defined(_M_ARM64)
+        if (!DEB_IS_CONST_EVAL()) {
+            u64 h = 0;
+            u64 l = _umul128(lo, o.lo, &h);
+            h += lo * o.hi + hi * o.lo;
+            return u128(h, l);
+        }
+#endif
         u64 a0 = lo & 0xFFFFFFFF, a1 = lo >> 32;
         u64 b0 = o.lo & 0xFFFFFFFF, b1 = o.lo >> 32;
         u64 p00 = a0 * b0;
@@ -110,10 +132,21 @@ struct u128 {
         return u128(h, l);
     }
 
-    // Division and modulo by u64 – binary long division (constexpr-compatible).
+    // Division and modulo by u64 – hardware 128/64 divide at runtime,
+    // binary long division when constant-evaluated.
     constexpr u128 operator/(u64 d) const {
         if (hi == 0)
             return u128(0, lo / d);
+#if defined(_M_X64)
+        if (!DEB_IS_CONST_EVAL()) {
+            // Two-step so the high word of each _udiv128 is < d (avoids #DE).
+            u64 qh = hi / d;
+            u64 r = hi % d;
+            u64 rem = 0;
+            u64 ql = _udiv128(r, lo, d, &rem);
+            return u128(qh, ql);
+        }
+#endif
         u64 qh = hi / d;
         u64 rem = hi % d;
         u64 ql = 0;
@@ -130,6 +163,14 @@ struct u128 {
     constexpr u128 operator%(u64 d) const {
         if (hi == 0)
             return u128(0, lo % d);
+#if defined(_M_X64)
+        if (!DEB_IS_CONST_EVAL()) {
+            u64 r = hi % d; // < d, so _udiv128 cannot overflow
+            u64 rem = 0;
+            (void)_udiv128(r, lo, d, &rem);
+            return u128(0, rem);
+        }
+#endif
         u64 rem = hi % d;
         for (int i = 63; i >= 0; i--) {
             bool overflow = (rem >> 63) != 0;
@@ -245,6 +286,8 @@ struct i128 {
     constexpr bool operator<=(const i128 &o) const { return !(o < *this); }
     constexpr bool operator>=(const i128 &o) const { return !(*this < o); }
 };
+
+#undef DEB_IS_CONST_EVAL
 
 #else // GCC / Clang
 

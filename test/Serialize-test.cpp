@@ -275,6 +275,44 @@ TEST_P(Serialize, MinimalSecretKeySerializationTest) {
     }
 }
 
+TEST_P(Serialize, SeedOnlyCipherSerializationTest) {
+    MSGS msg = gen_random_message<MSGS>();
+    msg = scale_message(msg, 0);
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+
+    // Full ciphertext for a size baseline.
+    Ciphertext full(preset);
+    encryptor.encrypt(msg, sk, full);
+    std::ostringstream os_full;
+    serializeToStream(full, os_full);
+
+    // Seed-only ciphertext: the 'a' polynomial is dropped, only the seed kept.
+    Ciphertext ctxt(preset);
+    encryptor.encrypt(msg, sk, ctxt, EncryptOptions().SeedOnlyA(true));
+    ASSERT_TRUE(ctxt.hasSeed());
+    ASSERT_TRUE(ctxt.isAxFlushed());
+
+    std::ostringstream os;
+    serializeToStream(ctxt, os);
+    EXPECT_LT(os.str().size(), os_full.str().size());
+
+    std::istringstream is(os.str());
+    Ciphertext deserialized(preset);
+    deserializeFromStream(is, deserialized);
+
+    EXPECT_TRUE(deserialized.hasSeed());
+    EXPECT_TRUE(deserialized.isAxFlushed());
+    EXPECT_EQ(static_cast<int>(deserialized.seedMode()),
+              static_cast<int>(CipherSeedMode::UNIFORM));
+    compareArray(ctxt.getSeed().data(), deserialized.getSeed().data(),
+                 ctxt.getSeed().size());
+
+    // The deserialized seed-only ciphertext decrypts correctly (auto-expand).
+    MSGS dec = gen_empty_message<MSGS>();
+    decryptor.decrypt(deserialized, sk, dec);
+    compare_msg(msg, dec, scale_error(sk_err, 0));
+}
+
 #define X(PRESET) Preset::PRESET_##PRESET,
 const std::vector<Preset> all_presets = {PRESET_LIST
 #undef X

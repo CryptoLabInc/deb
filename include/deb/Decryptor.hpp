@@ -136,6 +136,17 @@ private:
                             Real scale) const;
 
     utils::FFT fft_;
+
+    // Precomputed two-prime CRT constants for decodeWithPolyPair. The Bezout
+    // coefficients are modular inverses (Fermat exponentiation), so computing
+    // them once in the constructor instead of on every decrypt removes ~60
+    // modular multiplications per inverse from the hot decrypt path.
+    U crt_prime0_{};
+    U crt_prime1_{};
+    U crt_bezout0_{};
+    U crt_bezout1_{};
+    utils::u128 crt_prod_prime_{};
+    utils::u128 crt_half_prod_prime_{};
 };
 
 #define DECL_DECRYPT_TEMPLATE_MSG(preset, u_type, msg_t, prefix)               \

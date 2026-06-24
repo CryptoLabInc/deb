@@ -53,6 +53,11 @@ cmake --build build --target install
 - `DEB_INSTALL_ALEA`: Install the alea library when installing deb. (default: OFF)
 - `DEB_INSTALL_FLATBUFFERS`: Install the flatbuffers library when installing deb. (default: OFF)
 - `DEB_RUNTIME_RESOURCE_CHECK`: Enable runtime resource check. (default: ON)
+- `DEB_SERIALIZE_API`: Enable the serialization API (FlatBuffers). (default: ON)
+- `DEB_SUPPORT_U64`: Compile u64 coefficient word type support. (default: ON)
+- `DEB_SUPPORT_U32`: Compile u32 coefficient word type support. (default: OFF)
+- `DEB_MEMORY_ALIGN_SIZE`: Memory alignment size in bytes; 0 means no alignment. (default: 0)
+- `DEB_EXT_LIB_FOR_SECURE_ZERO`: External library for secure zeroing of memory. Options: NATIVE, LIBSODIUM, OPENSSL, NONE. (default: NONE)
 
 ## Testing
 
@@ -86,6 +91,11 @@ The `examples/` directory contains sample programs demonstrating various feature
   ./build/examples/EnDecryption-MultiSecret
   ```
 
+- **EnDecryption-Real.cpp**: Demonstrates encryption and decryption using the real-encryption (real-HEAAN) path
+  ```sh
+  ./build/examples/EnDecryption-Real
+  ```
+
 - **SeedOnlySecretKey.cpp**: Shows how to generate and use seed-only secret keys for efficient key storage
   ```sh
   ./build/examples/SeedOnlySecretKey
@@ -94,6 +104,11 @@ The `examples/` directory contains sample programs demonstrating various feature
 - **Serialization.cpp**: Demonstrates how to serialize and deserialize encrypted objects and keys
   ```sh
   ./build/examples/Serialization
+  ```
+
+- **CustomRNG.cpp**: Demonstrates plugging a custom random generator (libsodium-based) into the library
+  ```sh
+  ./build/examples/CustomRNG
   ```
 
 All examples are automatically built when `DEB_BUILD_EXAMPLES=ON` (default). Run them from the build directory after building the project.
