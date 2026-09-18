@@ -26,6 +26,15 @@ add_executable(deb-bench-ct-vs-rt bench_ct_vs_rt.cpp)
 target_link_libraries(deb-bench-ct-vs-rt PRIVATE deb)
 
 enable_language(C)
+# BLAKE3 is used only by the benchmark below, never by the library, so none of
+# it belongs in the install tree. Its install rules are also broken for a
+# subproject build: upstream writes libblake3.pc into its own binary dir but
+# installs it from ${CMAKE_BINARY_DIR} (the top-level one), so `cmake --install`
+# fails on a file that was never there. There is no BLAKE3_INSTALL option to
+# turn this off, and EXCLUDE_FROM_ALL does not suppress install() rules, so the
+# rules are skipped for the duration of the subdirectory instead.
+set(_deb_skip_install_backup ${CMAKE_SKIP_INSTALL_RULES})
+set(CMAKE_SKIP_INSTALL_RULES TRUE)
 cpmaddpackage(
   NAME
   blake3
@@ -35,6 +44,15 @@ cpmaddpackage(
   1.8.1
   SOURCE_SUBDIR
   c)
+set(CMAKE_SKIP_INSTALL_RULES ${_deb_skip_install_backup})
+unset(_deb_skip_install_backup)
+# CMAKE_SKIP_INSTALL_RULES suppresses the generated cmake_install.cmake for that
+# directory, but this directory's own script still include()s it, so leave an
+# empty one in its place.
+file(
+  WRITE ${blake3_BINARY_DIR}/cmake_install.cmake
+  "# BLAKE3 is a benchmark-only dependency and is intentionally not installed.\n"
+)
 
 add_executable(deb-benchmark-blake3 benchmark_blake3.cpp)
 target_link_libraries(deb-benchmark-blake3

@@ -92,15 +92,14 @@ void DecryptorT<P, U>::decryptInplace(CiphertextT<U> &ctxt,
                "[Decryptor::decrypt] Level of secret key must be greater than "
                "or equal to ciphertext level");
 
-    // Seed-only 'a': regenerate before use. The secret-key (UNIFORM) case needs
-    // no key; the public-key (PUBLICKEY) case cannot be reconstructed here (the
-    // encryption key is not available) — the caller must complete it first.
+    // Seed-only 'a': regenerate before use. Seed compression is only supported
+    // for secret-key encryption (UNIFORM), where 'a' is public uniform
+    // randomness reproducible from the stored seed without any key.
     if (ctxt.hasSeed() && ctxt.isAxFlushed()) {
         if (ctxt.seedMode() != CipherSeedMode::UNIFORM) {
             throw std::runtime_error(
-                "[Decryptor::decrypt] Cannot decrypt a public-key seed-only "
-                "ciphertext without the encryption key; call "
-                "Encryptor::completeCiphertext(ctxt, enckey) first.");
+                "[Decryptor::decrypt] Ciphertext has a released 'a' part but "
+                "an unsupported seed mode.");
         }
         const utils::NTTType ntt_type_a = (ctxt.encoding() == REAL)
                                               ? utils::NTTType::CYCLIC
@@ -117,7 +116,7 @@ void DecryptorT<P, U>::decryptInplace(CiphertextT<U> &ctxt,
 
     const int max_num_threads =
         static_cast<int>(ctxt[0].size() * (degree >> 10));
-    utils::setOmpThreadLimit(max_num_threads);
+    const utils::OmpThreadLimitGuard omp_guard(max_num_threads);
 
     const bool is_real = ctxt.encoding() == REAL;
     const utils::NTTType ntt_type =
@@ -139,7 +138,6 @@ void DecryptorT<P, U>::decryptInplace(CiphertextT<U> &ctxt,
         PolynomialT<U> ptxt_tmp = innerDecrypt(ctxt_tmp, sk[i], ax);
         decode(ptxt_tmp, msg[i], scale, is_real);
     }
-    utils::unsetOmpThreadLimit();
 }
 
 template <Preset P, typename U>

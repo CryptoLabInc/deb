@@ -18,8 +18,22 @@
 
 include(CMakeFindDependencyMacro)
 
-find_dependency(alea REQUIRED)
-find_dependency(flatbuffers REQUIRED)
+# alea and flatbuffers are only dependencies a consumer has to find when they
+# were installed alongside deb, which is the shared-library build. A static deb
+# links them through BUILD_INTERFACE and bakes their objects into libdeb.a, so
+# requiring them here would make find_package(deb) fail on every default
+# (static) install, where neither package is present.
+set(DEB_INSTALL_ALEA @DEB_INSTALL_ALEA@)
+if(DEB_INSTALL_ALEA)
+  find_dependency(alea REQUIRED)
+endif()
+unset(DEB_INSTALL_ALEA)
+
+set(DEB_INSTALL_FLATBUFFERS @DEB_INSTALL_FLATBUFFERS@)
+if(DEB_INSTALL_FLATBUFFERS)
+  find_dependency(flatbuffers REQUIRED)
+endif()
+unset(DEB_INSTALL_FLATBUFFERS)
 
 set(DEB_BUILD_WITH_OMP @DEB_BUILD_WITH_OMP@)
 if(DEB_BUILD_WITH_OMP)

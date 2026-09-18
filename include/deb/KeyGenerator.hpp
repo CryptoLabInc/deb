@@ -30,6 +30,15 @@ namespace deb {
 
 /**
  * @brief Generates an encryption key and switching keys for CKKS presets.
+ *
+ * @note Not thread-safe. The genXxxKey methods are @c const, but they all
+ * draw from the RandomGenerator this object owns and that draw is not
+ * synchronized (the default ALEA backend states that its API "is not
+ * guaranteed to be thread-safe"), so concurrent calls on the SAME instance
+ * are a data race. Use one instance per thread. Separate instances share no
+ * mutable state once constructed; construction without an explicit seed or
+ * RNG draws from the process-wide SeedGenerator singleton, which is itself
+ * unsynchronized, so build the per-thread instances before the threads start.
  */
 template <Preset P = PRESET_EMPTY, typename U = u64>
 class KeyGeneratorT : public PresetTraits<P, U> {

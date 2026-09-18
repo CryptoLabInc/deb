@@ -20,13 +20,185 @@
 #include "DebFBType.h"
 
 #include <sstream>
+#include <string>
 
 namespace deb {
+
+/**
+ * @brief Upper bound on the length prefix accepted by @ref
+ * deserializeFromStream.
+ *
+ * The prefix is read from an untrusted stream and used directly to size the
+ * read buffer, so it is bounded to keep a malformed or hostile header from
+ * requesting an arbitrary allocation. The bound is exclusive: this value names
+ * the smallest length that is rejected. 2 GiB is far above any real serialized
+ * key or ciphertext, and @ref Size is 32-bit, so this is half the representable
+ * range.
+ */
+constexpr Size DEB_MAX_SERIALIZED_SIZE = Size{1} << 31;
+
+// FlatBuffers addresses a buffer with 32-bit signed offsets, so it cannot
+// represent one at or above 2 GiB either. Keeping the two limits identical is
+// what lets serializeToStream reject, up front, exactly the objects
+// deserializeFromStream would refuse.
+static_assert(DEB_MAX_SERIALIZED_SIZE - 1 <=
+                  static_cast<Size>(FLATBUFFERS_MAX_BUFFER_SIZE),
+              "DEB_MAX_SERIALIZED_SIZE must not exceed what FlatBuffers can "
+              "represent");
+
+namespace detail {
+
+// Upper bounds on FlatBuffers' structural overhead. A PolyUnit table costs a
+// vtable, a body (soffset, prime, degree, ntt_info, array offset), the array's
+// length word and worst-case alignment padding -- measured at ~36 bytes, so
+// these constants only ever over-estimate. Exactness is not the goal and would
+// be fragile across a FlatBuffers bump; never under-counting is.
+constexpr u64 FB_POLYUNIT_OVERHEAD = 64;
+constexpr u64 FB_POLY_OVERHEAD = 48;
+constexpr u64 FB_TABLE_OVERHEAD = 64;
+/// Deb table, union type/value vectors, root offset, and the 4-byte length
+/// prefix serializeToStream writes ahead of the buffer.
+constexpr u64 FB_ENVELOPE_OVERHEAD = 128;
+/// One slot in a vector of offsets.
+constexpr u64 FB_OFFSET = 4;
+/// A `[uint64]` seed vector: length word, payload, worst-case padding.
+constexpr u64 FB_SEED_VECTOR = 16 + 8 * u64{DEB_U64_SEED_SIZE};
+constexpr u64 FB_EMPTY_VECTOR = 8;
+
+inline u64 boundPolyUnit(const PolyUnit &unit) {
+    // degree() is 0 for a released unit, which is exactly what
+    // serializePolyUnit writes, so emptiness needs no special case.
+    return u64{8} * unit.degree() + FB_POLYUNIT_OVERHEAD;
+}
+
+inline u64 boundPoly(const Polynomial &poly) {
+    u64 bytes = FB_POLY_OVERHEAD;
+    // Units within one Polynomial can have different degrees (a sliced or
+    // partially-copied polynomial does), so sum them rather than multiplying by
+    // any preset-derived limb count.
+    for (Size i = 0; i < poly.size(); ++i) {
+        bytes += boundPolyUnit(poly[i]) + FB_OFFSET;
+    }
+    return bytes;
+}
+
+} // namespace detail
+
+/**
+ * @brief Upper bound, in bytes, on what @ref serializeToStream writes for
+ * @p data, including the length prefix.
+ *
+ * Computed from the object's own shape in 64-bit arithmetic, so it stays exact
+ * for sizes that a serialized buffer could never represent. A seed-only
+ * ciphertext needs no special case: @ref CiphertextT::flushAx leaves the
+ * released @c a part as a zero-size polynomial, which the sum below skips.
+ */
+inline u64 serializedSizeUpperBound(const Ciphertext &cipher) {
+    u64 bytes = detail::FB_TABLE_OVERHEAD + detail::FB_ENVELOPE_OVERHEAD;
+    for (Size i = 0; i < cipher.numPoly(); ++i) {
+        bytes += detail::boundPoly(cipher[i]) + detail::FB_OFFSET;
+    }
+    bytes +=
+        cipher.hasSeed() ? detail::FB_SEED_VECTOR : detail::FB_EMPTY_VECTOR;
+    return bytes;
+}
+
+/** @copydoc serializedSizeUpperBound(const Ciphertext &) */
+inline u64 serializedSizeUpperBound(const SwitchKey &swk) {
+    u64 bytes = detail::FB_TABLE_OVERHEAD + detail::FB_ENVELOPE_OVERHEAD;
+    for (Size i = 0; i < swk.axSize(); ++i) {
+        bytes += detail::boundPoly(swk.ax(i)) + detail::FB_OFFSET;
+    }
+    // bxSize() is not always axSize(): addBx() can append dnum*num_secret
+    // polynomials in a single call.
+    for (Size i = 0; i < swk.bxSize(); ++i) {
+        bytes += detail::boundPoly(swk.bx(i)) + detail::FB_OFFSET;
+    }
+    return bytes;
+}
+
+/** @copydoc serializedSizeUpperBound(const Ciphertext &) */
+inline u64 serializedSizeUpperBound(const SecretKey &sk) {
+    u64 bytes = detail::FB_TABLE_OVERHEAD + detail::FB_ENVELOPE_OVERHEAD;
+    // The coefficients and the embedded polynomials are independently optional.
+    bytes += u64{sk.coeffsSize()} + detail::FB_EMPTY_VECTOR;
+    for (Size i = 0; i < sk.numPoly(); ++i) {
+        bytes += detail::boundPoly(sk[i]) + detail::FB_OFFSET;
+    }
+    bytes += sk.hasSeed() ? detail::FB_SEED_VECTOR : detail::FB_EMPTY_VECTOR;
+    return bytes;
+}
+
+/** @copydoc serializedSizeUpperBound(const Ciphertext &) */
+inline u64 serializedSizeUpperBound(const Polynomial &poly) {
+    return detail::FB_ENVELOPE_OVERHEAD + detail::boundPoly(poly);
+}
+
+/** @copydoc serializedSizeUpperBound(const Ciphertext &) */
+inline u64 serializedSizeUpperBound(const PolyUnit &unit) {
+    return detail::FB_ENVELOPE_OVERHEAD + detail::boundPolyUnit(unit);
+}
+
+/** @copydoc serializedSizeUpperBound(const Ciphertext &) */
+inline u64 serializedSizeUpperBound(const Message &msg) {
+    return detail::FB_ENVELOPE_OVERHEAD + detail::FB_TABLE_OVERHEAD +
+           u64{2 * sizeof(Real)} * msg.size();
+}
+
+/** @copydoc serializedSizeUpperBound(const Ciphertext &) */
+inline u64 serializedSizeUpperBound(const FMessage &msg) {
+    return detail::FB_ENVELOPE_OVERHEAD + detail::FB_TABLE_OVERHEAD +
+           u64{2 * sizeof(float)} * msg.size();
+}
+
+/** @copydoc serializedSizeUpperBound(const Ciphertext &) */
+inline u64 serializedSizeUpperBound(const CoeffMessage &coeff) {
+    return detail::FB_ENVELOPE_OVERHEAD + detail::FB_TABLE_OVERHEAD +
+           u64{sizeof(Real)} * coeff.size();
+}
+
+/** @copydoc serializedSizeUpperBound(const Ciphertext &) */
+inline u64 serializedSizeUpperBound(const FCoeffMessage &coeff) {
+    return detail::FB_ENVELOPE_OVERHEAD + detail::FB_TABLE_OVERHEAD +
+           u64{sizeof(float)} * coeff.size();
+}
 
 /**
  * @brief Convenience alias for FlatBuffers vector types.
  */
 template <typename T> using Vector = flatbuffers::Vector<T>;
+
+/**
+ * @brief The union tag a serialized @p T carries, or @c DebUnion_NONE for a
+ * type that is not serializable.
+ *
+ * Used to reject type confusion: @c GetAs<T>() is an unchecked reinterpret, so
+ * without comparing the stored tag a buffer holding one type and read back as
+ * another turns scalar payload bytes into table and vector offsets.
+ */
+template <typename T> constexpr deb_fb::DebUnion debUnionTag() {
+    if constexpr (std::is_same_v<T, SwitchKey>) {
+        return deb_fb::DebUnion_Swk;
+    } else if constexpr (std::is_same_v<T, SecretKey>) {
+        return deb_fb::DebUnion_Sk;
+    } else if constexpr (std::is_same_v<T, Ciphertext>) {
+        return deb_fb::DebUnion_Cipher;
+    } else if constexpr (std::is_same_v<T, Polynomial>) {
+        return deb_fb::DebUnion_Poly;
+    } else if constexpr (std::is_same_v<T, PolyUnit>) {
+        return deb_fb::DebUnion_PolyUnit;
+    } else if constexpr (std::is_same_v<T, Message>) {
+        return deb_fb::DebUnion_Message;
+    } else if constexpr (std::is_same_v<T, FMessage>) {
+        return deb_fb::DebUnion_Message32;
+    } else if constexpr (std::is_same_v<T, CoeffMessage>) {
+        return deb_fb::DebUnion_Coeff;
+    } else if constexpr (std::is_same_v<T, FCoeffMessage>) {
+        return deb_fb::DebUnion_Coeff32;
+    } else {
+        return deb_fb::DebUnion_NONE;
+    }
+}
 
 /**
  * @brief Converts a double-precision complex into FlatBuffers format.
@@ -149,7 +321,8 @@ serializePolyUnit(flatbuffers::FlatBufferBuilder &builder,
  * @param polyunit FlatBuffers poly unit object.
  * @return PolyUnit populated from the serialized data.
  */
-PolyUnit deserializePolyUnit(const deb_fb::PolyUnit *polyunit);
+PolyUnit deserializePolyUnit(const deb_fb::PolyUnit *polyunit,
+                             std::optional<Preset> preset = std::nullopt);
 
 /**
  * @brief Serializes a polynomial object.
@@ -278,10 +451,32 @@ flatbuffers::Offset<deb_fb::Deb> toDeb(flatbuffers::FlatBufferBuilder &builder,
  * @tparam T Supported object type (Ciphertext, SecretKey, etc.).
  * @param data Object to serialize.
  * @param os Output stream receiving the bytes.
- * @throws std::runtime_error If the object type is unsupported
- * or if serialization fails (e.g., output stream errors).
+ * @throws std::runtime_error If the object type is unsupported, if the object
+ * is too large to fit in one buffer (see @ref serializedSizeUpperBound and
+ * @ref DEB_MAX_SERIALIZED_SIZE), or if writing to @p os fails.
  */
 template <typename T> void serializeToStream(const T &data, std::ostream &os) {
+    // Reject an oversized object BEFORE building it. FlatBuffers' only size
+    // guard is a FLATBUFFERS_ASSERT, i.e. plain assert(), which this library's
+    // release builds compile out; past 4 GiB its internal 32-bit size counter
+    // simply wraps. builder.GetSize() is that same uint32, so a check after
+    // Finish() would be reading a number modulo 2^32 -- and a wrapped value can
+    // land back inside the accepted range, turning a loud failure into a
+    // silently truncated buffer. The bound below is the only reliable check,
+    // and it also costs nothing: an object too large to represent is rejected
+    // without allocating it.
+    const u64 size_bound = serializedSizeUpperBound(data);
+    if (size_bound >= static_cast<u64>(DEB_MAX_SERIALIZED_SIZE)) {
+        throw std::runtime_error(
+            "[serializeToStream] Object is too large to serialize: it needs "
+            "about " +
+            std::to_string(size_bound) +
+            " bytes, and a single buffer cannot reach " +
+            std::to_string(static_cast<u64>(DEB_MAX_SERIALIZED_SIZE)) +
+            " bytes. Split it, or use a smaller parameter (for a self mod-pack "
+            "key, a smaller pad_rank).");
+    }
+
     flatbuffers::FlatBufferBuilder builder;
     if constexpr (std::is_same_v<T, SwitchKey>) {
         builder.Finish(toDeb(builder, serializeSwk(builder, data)));
@@ -306,9 +501,23 @@ template <typename T> void serializeToStream(const T &data, std::ostream &os) {
             "[serializeToStream] Unsupported type for serialization");
     }
     Size size = builder.GetSize();
+    // Second line of defence, using the reader's exact predicate so the two
+    // cannot disagree. This is only sound because the bound above already ruled
+    // out a wrapped size; on its own it would be meaningless.
+    if (size == 0 || size >= DEB_MAX_SERIALIZED_SIZE) {
+        throw std::runtime_error(
+            "[serializeToStream] Serialized buffer has an unusable size");
+    }
     os.write(reinterpret_cast<const char *>(&size), sizeof(Size));
     os.write(reinterpret_cast<const char *>(builder.GetBufferPointer()),
              builder.GetSize());
+    // A failed first write makes the second a silent no-op, and failbit/badbit
+    // are sticky, so one check covers both. Note this reports a write error,
+    // not durability: a buffered stream may only fail later, at flush or close.
+    if (!os) {
+        throw std::runtime_error(
+            "[serializeToStream] Failed to write to the output stream");
+    }
 }
 
 /**
@@ -322,20 +531,45 @@ template <typename T> void serializeToStream(const T &data, std::ostream &os) {
 template <typename T>
 void deserializeFromStream(std::istream &is, T &data,
                            std::optional<Preset> preset = std::nullopt) {
-    Size size;
-    is.read(reinterpret_cast<char *>(&size), sizeof(Size));
-    deb_assert(size > 0,
-               "[deserializeFromStream] Invalid size for deserialization");
+    // Validation of an untrusted buffer is a security boundary, not a
+    // "resource check": these checks throw unconditionally rather than through
+    // deb_assert, which compiles to nothing when DEB_RUNTIME_RESOURCE_CHECK is
+    // off and would leave the parser reading unverified bytes.
+    Size size = 0;
+    if (!is.read(reinterpret_cast<char *>(&size), sizeof(Size))) {
+        throw std::runtime_error(
+            "[deserializeFromStream] Could not read the buffer length");
+    }
+    if (size == 0 || size >= DEB_MAX_SERIALIZED_SIZE) {
+        throw std::runtime_error(
+            "[deserializeFromStream] Invalid size for deserialization");
+    }
     std::vector<char> buffer(size);
-    is.read(buffer.data(), size);
+    if (!is.read(buffer.data(), static_cast<std::streamsize>(size))) {
+        throw std::runtime_error(
+            "[deserializeFromStream] Truncated serialized buffer");
+    }
     flatbuffers::Verifier verifier(
         reinterpret_cast<const uint8_t *>(buffer.data()), buffer.size());
-    deb_assert(deb_fb::VerifyDebBuffer(verifier),
-               "[deserializeFromStream] Invalid buffer for deserialization");
+    if (!deb_fb::VerifyDebBuffer(verifier)) {
+        throw std::runtime_error(
+            "[deserializeFromStream] Invalid buffer for deserialization");
+    }
     const auto *deb = deb_fb::GetDeb(buffer.data());
-    deb_assert(deb->list()->size() == 1,
-               "[deserializeFromStream] Invalid Deb buffer: expected exactly "
-               "one element");
+    if (deb == nullptr || deb->list() == nullptr || deb->list()->size() != 1) {
+        throw std::runtime_error(
+            "[deserializeFromStream] Invalid Deb buffer: expected exactly "
+            "one element");
+    }
+    // GetAs<T>() below is an unchecked reinterpret, so the stored union tag
+    // must be confirmed to match the requested type first.
+    constexpr deb_fb::DebUnion expected_tag = debUnionTag<T>();
+    if (deb->list_type() == nullptr || deb->list_type()->size() != 1 ||
+        deb->list_type()->Get(0) != expected_tag) {
+        throw std::runtime_error(
+            "[deserializeFromStream] Serialized object is not of the "
+            "requested type");
+    }
     if constexpr (std::is_same_v<T, SwitchKey>) {
         data = deserializeSwk(deb->list()->GetAs<deb_fb::Swk>(0));
     } else if constexpr (std::is_same_v<T, SecretKey>) {
@@ -350,7 +584,12 @@ void deserializeFromStream(std::istream &is, T &data,
         data = deserializePoly(preset.value(),
                                deb->list()->GetAs<deb_fb::Poly>(0));
     } else if constexpr (std::is_same_v<T, PolyUnit>) {
-        data = deserializePolyUnit(deb->list()->GetAs<deb_fb::PolyUnit>(0));
+        if (!preset.has_value()) {
+            throw std::runtime_error("[deserializeFromStream] Preset must be "
+                                     "provided for deserializing PolyUnit");
+        }
+        data = deserializePolyUnit(deb->list()->GetAs<deb_fb::PolyUnit>(0),
+                                   preset);
     } else if constexpr (std::is_same_v<T, Message>) {
         data = deserializeMessage(deb->list()->GetAs<deb_fb::Message>(0));
     } else if constexpr (std::is_same_v<T, FMessage>) {

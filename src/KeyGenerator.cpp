@@ -102,7 +102,7 @@ template <Preset P, typename U>
 KeyGeneratorT<P, U>::KeyGeneratorT(const Preset target_preset,
                                    std::optional<const RNGSeed> seed)
     : PresetTraits<P, U>(target_preset),
-      rng_(createRandomGenerator(seed.value_or(SeedGenerator::Gen()))),
+      rng_(createRandomGenerator(seed ? *seed : SeedGenerator::Gen())),
       fft_(degree) {
     for (u64 i = 0; i < num_p; ++i) {
         modarith.emplace_back(degree, primes[i]);
@@ -664,6 +664,10 @@ KeyGeneratorT<P, U>::genModPackKeyBundle(const Size pad_rank,
                                          const SecretKeyT<U> &sk) const {
     SwitchKeyT<U> modkey(preset, SWK_MODPACK_SELF);
     const auto max_length = num_p;
+    // A self mod-pack key is sized by pad_rank, not by the preset's gadget
+    // rank, so record it: every key kind keeps axSize()==dnum(), and
+    // serialization uses dnum to validate the shape of an incoming key.
+    modkey.setDnum(pad_rank);
     modkey.addAx(max_length, pad_rank, sk[0][0].getNTTType(),
                  sk[0][0].getNTTRootType());
     modkey.addBx(max_length, pad_rank * num_secret, sk[0][0].getNTTType(),
@@ -684,6 +688,7 @@ void KeyGeneratorT<P, U>::genModPackKeyBundleInplace(
                    modkey.axSize() == pad_rank,
                "[KeyGenerator::genModPackKeyBundle] The provided switching key "
                "has invalid size.");
+    modkey.setDnum(pad_rank);
 
     const auto ntt_type = sk[0][0].getNTTType();
     for (Size i = 0; i < pad_rank; ++i) {

@@ -17,7 +17,7 @@
 cmake_minimum_required(VERSION 3.21)
 project(
   deb
-  VERSION 0.4.1
+  VERSION 0.5.0
   LANGUAGES CXX
   DESCRIPTION "CryptoLab's official cryptosystem library for FHE.")
 
@@ -73,6 +73,12 @@ option(DEB_RUNTIME_RESOURCE_CHECK "Enable runtime resource check." ON)
 option(DEB_SERIALIZE_API "Enable serialize API." ON)
 option(DEB_SUPPORT_U64 "Compile u64 coefficient word type support." ON)
 option(DEB_SUPPORT_U32 "Compile u32 coefficient word type support." OFF)
+set(DEB_ARCH
+    ""
+    CACHE
+      STRING
+      "Target CPU microarchitecture passed to -march (e.g. x86-64-v3, native). Empty keeps the portable default. x86-64-v3 (AVX2+FMA+BMI2) is recommended for modern x86 and speeds up the hot NTT/modular-arithmetic kernels without the AVX-512 downclocking that -march=native can cause."
+)
 
 if(NOT DEB_SUPPORT_U64 AND NOT DEB_SUPPORT_U32)
   message(
@@ -99,6 +105,26 @@ if(BUILD_SHARED_LIBS)
         BOOL
         "Enable installation of flatbuffers library for shared library build."
         FORCE)
+endif()
+
+# The serialize API puts flatbuffers into the PUBLIC include graph: the
+# installed Serialize.hpp includes DebFBType.h, which includes
+# <flatbuffers/flatbuffers.h>. A consumer cannot compile against an install that
+# omits those headers, so this is not optional whenever we install at all.
+if(DEB_INSTALL AND DEB_SERIALIZE_API)
+  set(DEB_INSTALL_FLATBUFFERS
+      ON
+      CACHE BOOL
+            "Enable installation of flatbuffers required by the serialize API."
+            FORCE)
+endif()
+
+# When tuning for a specific architecture, also tune the C dependencies (most
+# importantly the alea RNG's Keccak permutation, which is a measurable part of
+# encryption). Done before add_subdirectory(external) so those targets inherit
+# it; the deb C++ library itself gets -march via target_compile_options below.
+if(DEB_ARCH AND NOT MSVC)
+  string(APPEND CMAKE_C_FLAGS " -march=${DEB_ARCH}")
 endif()
 
 add_subdirectory(external)
@@ -150,6 +176,15 @@ if(NOT MSVC)
   target_compile_options(${PROJECT_NAME} PRIVATE -Wno-pedantic)
 endif()
 
+# Optional target-architecture tuning. Applied PUBLIC so the hot kernels in the
+# deb library itself and any inlined template code in dependents (benchmark,
+# examples) are all compiled for the same ISA. Empty by default to preserve a
+# portable baseline build.
+if(DEB_ARCH AND NOT MSVC)
+  target_compile_options(${PROJECT_NAME} PUBLIC -march=${DEB_ARCH})
+  message(STATUS "deb: tuning for -march=${DEB_ARCH}")
+endif()
+
 string(TOUPPER "${DEB_EXT_LIB_FOR_SECURE_ZERO}" _deb_secure_zero_backend)
 if(_deb_secure_zero_backend STREQUAL "LIBSODIUM")
   target_compile_definitions(${PROJECT_NAME} PUBLIC DEB_SECURE_ZERO_LIBSODIUM)
@@ -162,11 +197,18 @@ elseif(_deb_secure_zero_backend STREQUAL "NATIVE")
 endif()
 unset(_deb_secure_zero_backend)
 
+# The install interface must mirror the build interface. The public headers
+# include each other unqualified relative to include/${PROJECT_NAME} (e.g.
+# utils/RandomGenerator.hpp does #include "Types.hpp", and Preset.hpp does
+# #include "DebParam.hpp"), so that directory has to be an include root for
+# consumers too. The plain include dir is kept as a root as well so consumers
+# can write the qualified #include <${PROJECT_NAME}/Encryptor.hpp>.
 target_include_directories(
   ${PROJECT_NAME}
   PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include/${PROJECT_NAME}>
          $<BUILD_INTERFACE:${PRE_BUILD_DIR}>
-         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>
+         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME}>)
 
 if(DEB_RUNTIME_RESOURCE_CHECK)
   target_compile_definitions(${PROJECT_NAME} PUBLIC DEB_RESOURCE_CHECK)
@@ -266,9 +308,20 @@ if(DEB_INSTALL)
     INCLUDES
     DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 
-  # Install header files
-  install(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
-          DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+  # Install header files. The generated headers are excluded here and installed
+  # separately below, because they must not keep their extra "generated/" level
+  # in the installed tree.
+  install(
+    DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/include/
+    DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}
+    PATTERN "generated" EXCLUDE)
+
+  # ${PRE_BUILD_DIR} is a second include root at build time, so headers such as
+  # Preset.hpp and Serialize.hpp include the generated ones unqualified
+  # (#include "DebParam.hpp"). The install tree exposes a single include root,
+  # so put the generated headers flat next to the headers that include them.
+  install(DIRECTORY ${PRE_BUILD_DIR}/
+          DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/${PROJECT_NAME})
 
   # Export target for use with find_package
   install(
