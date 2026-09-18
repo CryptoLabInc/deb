@@ -114,33 +114,35 @@ int main() {
     }
 
     // ---------------------------------------------------------------------
-    // 3. Public-key seed-only encryption (needs the enc key to expand 'a')
+    // 3. Seed compression is rejected for public-key encryption
     // ---------------------------------------------------------------------
+    // Under a public key the 'a' part is a = v*ax + e_a, derived from the same
+    // stream as the ephemeral encryption randomness v. Storing that seed in the
+    // ciphertext would let anyone holding the ciphertext and the (public)
+    // encryption key replay v and recover the plaintext without the secret key,
+    // so the library refuses the combination. Seed compression is only sound
+    // for secret-key encryption, where 'a' is public uniform randomness.
     {
         KeyGenerator keygen(preset);
         SwitchKey ek = keygen.genEncKey(sk);
 
-        Ciphertext ctxt(preset);
-        enc.encrypt(msg, ek, ctxt, EncryptOptions().SeedOnlyA(true));
         std::cout << "\n[Public-key seed-only]" << std::endl;
-        std::cout << "  isAxFlushed=" << ctxt.isAxFlushed() << std::endl;
-
-        // a = v*ax + e cannot be regenerated without the encryption key, so the
-        // decryptor refuses a still-compressed public-key ciphertext.
         try {
-            Message tmp(preset);
-            dec.decrypt(ctxt, sk, tmp);
-            std::cout << "  unexpected: decrypt succeeded while compressed"
+            Ciphertext rejected(preset);
+            enc.encrypt(msg, ek, rejected, EncryptOptions().SeedOnlyA(true));
+            std::cout << "  unexpected: encrypt accepted seed-only 'a'"
                       << std::endl;
         } catch (const std::exception &e) {
-            std::cout << "  decrypt refused (expected): " << e.what()
+            std::cout << "  encrypt refused (expected): " << e.what()
                       << std::endl;
         }
 
-        enc.completeCiphertext(ctxt, ek); // supply the encryption key
+        // Public-key encryption without seed compression works as usual.
+        Ciphertext ctxt(preset);
+        enc.encrypt(msg, ek, ctxt);
         Message dec_msg(preset);
         dec.decrypt(ctxt, sk, dec_msg);
-        std::cout << "  log2 error (after completeCiphertext) = "
+        std::cout << "  plain public-key encrypt log2 error = "
                   << compareMessage(msg, dec_msg) << std::endl;
     }
 

@@ -44,7 +44,13 @@ struct EncryptOptions {
                                    release its storage after encryption. The
                                    regenerated @c a follows the ciphertext's
                                    domain (NTT, or coefficient when
-                                   ntt_out==false). Requires rank==1. */
+                                   ntt_out==false). Requires rank==1.
+                                   SECRET-KEY ENCRYPTION ONLY: encrypting under
+                                   a public key with this option throws, because
+                                   there @c a depends on the ephemeral
+                                   encryption randomness @c v and the stored
+                                   seed would reveal the plaintext to any holder
+                                   of the ciphertext and the public key. */
     std::optional<RNGSeed> a_seed =
         std::nullopt; /**< Optional fixed seed for the @c a part. When unset and
                            @ref seed_only_a is enabled, a fresh seed is drawn.
@@ -129,6 +135,15 @@ struct EncryptOptions {
 
 /**
  * @brief Provides CKKS encoding and encryption routines.
+ *
+ * @note Not thread-safe. The encode/encrypt methods are @c const, but they
+ * mutate the RNG streams and the reusable scratch buffers this object owns,
+ * so concurrent calls on the SAME instance are a data race. Use one instance
+ * per thread. Separate instances share no mutable state of their own, but
+ * constructing without an explicit seed, and encrypting with @ref
+ * EncryptOptions::seed_only_a but no @ref EncryptOptions::a_seed, both draw
+ * from the process-wide SeedGenerator singleton, which is itself
+ * unsynchronized; pass explicit seeds when such calls can overlap.
  */
 template <Preset P = PRESET_EMPTY, typename U = u64>
 class EncryptorT : public PresetTraits<P, U> {
@@ -246,16 +261,6 @@ public:
      */
     void completeCiphertext(CiphertextT<U> &ctxt) const;
 
-    /**
-     * @brief Regenerates the @c a part of a PUBLICKEY (public-key) seed-only
-     * ciphertext, where @c a = v*ax + e. The same encryption key used at
-     * encryption time must be supplied.
-     * @param ctxt Seed-only ciphertext to complete in place.
-     * @param enckey Encryption (switching) key used to produce @p ctxt.
-     */
-    void completeCiphertext(CiphertextT<U> &ctxt,
-                            const SwitchKeyT<U> &enckey) const;
-
 private:
     /**
      * @brief Samples a zero-one polynomial.
@@ -302,9 +307,8 @@ private:
  *
  * Mirrors @ref completeSecretKey: reseeds from the ciphertext's stored seed and
  * refills the released @c a polynomial (no key required). Throws if the
- * ciphertext has no seed, or if it is a PUBLICKEY seed-only ciphertext (use
- * @ref EncryptorT::completeCiphertext with the encryption key for that case). A
- * no-op when @c a is already present.
+ * ciphertext has no seed or is not @ref CipherSeedMode::UNIFORM. A no-op when
+ * @c a is already present.
  *
  * @param ctxt Seed-only ciphertext to complete in place.
  */

@@ -31,3 +31,20 @@ function(set_deb_warnings target)
       $<$<CXX_COMPILER_ID:MSVC>:
       /W4>)
 endfunction()
+
+# Silence all warnings for a third-party target we pull in via CPM. A consumer
+# project that includes deb with global warning flags (e.g.
+# add_compile_options(-Wall ...) or CMAKE_CXX_FLAGS) leaks those flags into
+# every add_subdirectory(), including our dependencies. A target-level -w / /w
+# is appended after those global flags and disables the warnings we neither own
+# nor can fix, so the dependency stays quiet regardless of who builds deb.
+function(set_deb_no_warnings target)
+  if(NOT TARGET ${target})
+    return()
+  endif()
+  target_compile_options(
+    ${target}
+    PRIVATE
+      $<$<OR:$<CXX_COMPILER_ID:Clang>,$<CXX_COMPILER_ID:AppleClang>,$<CXX_COMPILER_ID:GNU>>:-w>
+      $<$<CXX_COMPILER_ID:MSVC>:/w>)
+endfunction()

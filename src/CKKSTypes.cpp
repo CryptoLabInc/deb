@@ -583,6 +583,10 @@ template <typename U> Size SwitchKeyT<U>::dnum() const noexcept {
     return dnum_;
 }
 
+template <typename U> void SwitchKeyT<U>::setDnum(Size dnum) noexcept {
+    dnum_ = dnum;
+}
+
 template <typename U>
 void SwitchKeyT<U>::addAx(const Size num_polyunit, std::optional<Size> size,
                           const utils::NTTType ntt_type,

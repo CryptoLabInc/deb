@@ -26,6 +26,9 @@ namespace deb {
 /**
  * @brief Singleton wrapper over RandomGenerator to provide deterministic RNG
  * streams.
+ *
+ * All static entry points are thread-safe; the underlying RNG state is
+ * serialized internally.
  */
 class SeedGenerator {
 public:
@@ -34,8 +37,10 @@ public:
     SeedGenerator &operator=(const SeedGenerator &) = delete;
 
     /**
-     * @brief Accesses the singleton, optionally reseeding it.
-     * @param seed Optional deterministic seed.
+     * @brief Accesses the singleton, creating it on first use.
+     * @param seed Optional deterministic seed. It is only honored by the call
+     * that constructs the singleton; later calls ignore it. Use Reseed() to
+     * change the seed of an existing instance.
      * @return Reference to the singleton instance.
      */
     static SeedGenerator &
@@ -46,7 +51,7 @@ public:
      * @param seed Optional deterministic seed; when empty a random seed is
      * chosen.
      */
-    static void Reseed(const std::optional<RNGSeed> &seed);
+    static void Reseed(const std::optional<RNGSeed> &seed = std::nullopt);
     /**
      * @brief Generates a new random seed suitable for deterministic APIs.
      * @return Fresh RNG seed.

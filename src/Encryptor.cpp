@@ -44,7 +44,7 @@ template <Preset P, typename U>
 EncryptorT<P, U>::EncryptorT(Preset target_preset,
                              std::optional<const RNGSeed> seed)
     : PresetTraits<P, U>(target_preset),
-      rng_(createRandomGenerator(seed.value_or(SeedGenerator::Gen()))),
+      rng_(createRandomGenerator(seed ? *seed : SeedGenerator::Gen())),
       ptxt_buffer_(target_preset, num_p * num_secret),
       vx_buffer_(target_preset, true), ex_buffer_(target_preset, true),
       mask_(degree), samples_(buffer_size(degree)), i_samples_(degree),
@@ -127,74 +127,89 @@ void EncryptorT<P, U>::encrypt(const MSG *msg, const KEY &key,
     [[maybe_unused]] RngResetGuard rng_reset_guard{a_rng_, error_rng_};
 
     // a_rng_ is non-null only for this call when seed-only mode is on; it
-    // produces the 'a' part (uniform for secret-key, or v and e_a for
-    // public-key) so 'a' can later be regenerated from the stored seed.
+    // produces the uniform 'a' part so 'a' can later be regenerated from the
+    // stored seed. Secret-key encryption only: see the throw below.
     RNGSeed a_seed_used{};
     if (opt.seed_only_a) {
-        if (rank != 1) {
-            throw std::runtime_error("[Encryptor::encrypt] seed-only 'a' is "
-                                     "only supported for rank == 1");
+        if constexpr (std::is_same_v<KEY, SwitchKeyT<U>>) {
+            // Under a public key, 'a' is not public randomness: it is
+            // a = v*ax + e_a, drawn from the same stream as the ephemeral
+            // encryption randomness v. Storing that seed in the ciphertext
+            // would let anyone holding the ciphertext and the (public)
+            // encryption key replay v and recover m = b - v*bx, i.e. the
+            // plaintext, without the secret key. The compression is only
+            // sound when 'a' is uniform, which is the secret-key case.
+            throw std::runtime_error(
+                "[Encryptor::encrypt] seed-only 'a' is not supported for "
+                "public-key encryption: the stored seed would reveal the "
+                "encryption randomness and hence the plaintext");
+        } else {
+            if (rank != 1) {
+                throw std::runtime_error(
+                    "[Encryptor::encrypt] seed-only 'a' is "
+                    "only supported for rank == 1");
+            }
+            a_seed_used = opt.a_seed ? *opt.a_seed : SeedGenerator::Gen();
+            a_rng_ = createRandomGenerator(a_seed_used);
         }
-        a_seed_used = opt.a_seed.value_or(SeedGenerator::Gen());
-        a_rng_ = createRandomGenerator(a_seed_used);
     }
     error_rng_ =
         opt.error_seed ? createRandomGenerator(*opt.error_seed) : nullptr;
     const int max_num_threads =
         static_cast<int>(single_num_polyunit * (degree >> 10));
-    utils::setOmpThreadLimit(max_num_threads);
+    {
+        const utils::OmpThreadLimitGuard omp_guard(max_num_threads);
 
-    PolynomialT<U> ptxt(ptxt_buffer_, 0, num_polyunit);
-    for (Size i = 0; i < num_polyunit; ++i) {
-        ptxt[i].setPrime(primes[i % single_num_polyunit]);
-    }
-
-    if (num_secret > 1) {
-        for (Size i = 0; i < num_secret; ++i) {
-            PolynomialT<U> ptxt_tmp(ptxt, single_num_polyunit * i,
-                                    single_num_polyunit);
-            encode(msg[i], ptxt_tmp, single_num_polyunit, opt);
+        PolynomialT<U> ptxt(ptxt_buffer_, 0, num_polyunit);
+        for (Size i = 0; i < num_polyunit; ++i) {
+            ptxt[i].setPrime(primes[i % single_num_polyunit]);
         }
-    } else {
-        encode(msg[0], ptxt, single_num_polyunit, opt);
-    }
 
-    if constexpr (std::is_same_v<MSG, Message> ||
-                  std::is_same_v<MSG, FMessage>) {
-        ctxt.setEncoding(SLOT);
-    } else if constexpr (std::is_same_v<MSG, CoeffMessage> ||
-                         std::is_same_v<MSG, FCoeffMessage>) {
-        ctxt.setEncoding(COEFF);
-    } else {
-        throw std::runtime_error(
-            "[Encryptor::encrypt] Unsupported message type");
-    }
-    if (opt.real_encrypt) {
-        ctxt.setEncoding(REAL);
-    }
-    innerEncrypt(ptxt, key, single_num_polyunit, ctxt);
+        if (num_secret > 1) {
+            for (Size i = 0; i < num_secret; ++i) {
+                PolynomialT<U> ptxt_tmp(ptxt, single_num_polyunit * i,
+                                        single_num_polyunit);
+                encode(msg[i], ptxt_tmp, single_num_polyunit, opt);
+            }
+        } else {
+            encode(msg[0], ptxt, single_num_polyunit, opt);
+        }
 
-    if (!opt.ntt_out) {
-        // When seed-only, the last poly ('a') is about to be released, so only
-        // the retained 'b' parts need the inverse transform; 'a' is regenerated
-        // (and matched to the coefficient domain) on demand.
-        const Size n_transform =
-            opt.seed_only_a ? ctxt.numPoly() - 1 : ctxt.numPoly();
-        for (u64 i = 0; i < n_transform; ++i) {
-            backwardNTT(modarith, ctxt[i], single_num_polyunit,
-                        ctxt[i][0].getNTTType());
+        if constexpr (std::is_same_v<MSG, Message> ||
+                      std::is_same_v<MSG, FMessage>) {
+            ctxt.setEncoding(SLOT);
+        } else if constexpr (std::is_same_v<MSG, CoeffMessage> ||
+                             std::is_same_v<MSG, FCoeffMessage>) {
+            ctxt.setEncoding(COEFF);
+        } else {
+            throw std::runtime_error(
+                "[Encryptor::encrypt] Unsupported message type");
+        }
+        if (opt.real_encrypt) {
+            ctxt.setEncoding(REAL);
+        }
+        innerEncrypt(ptxt, key, single_num_polyunit, ctxt);
+
+        if (!opt.ntt_out) {
+            // When seed-only, the last poly ('a') is about to be
+            // released, so only the retained 'b' parts need the inverse
+            // transform; 'a' is regenerated (and matched to the
+            // coefficient domain) on demand.
+            const Size n_transform =
+                opt.seed_only_a ? ctxt.numPoly() - 1 : ctxt.numPoly();
+            for (u64 i = 0; i < n_transform; ++i) {
+                backwardNTT(modarith, ctxt[i], single_num_polyunit,
+                            ctxt[i][0].getNTTType());
+            }
         }
     }
-    utils::unsetOmpThreadLimit();
 
     // --- Seed-only 'a' finalize -------------------------------------------
     if (opt.seed_only_a) {
+        // Only reachable for secret-key encryption -- the public-key case
+        // throws above -- so 'a' is always a uniform sample of the stored seed.
         ctxt.setSeed(a_seed_used);
-        if constexpr (std::is_same_v<KEY, SecretKeyT<U>>) {
-            ctxt.setSeedMode(CipherSeedMode::UNIFORM);
-        } else {
-            ctxt.setSeedMode(CipherSeedMode::PUBLICKEY);
-        }
+        ctxt.setSeedMode(CipherSeedMode::UNIFORM);
         // 'a' may be in NTT or coefficient domain depending on opt.ntt_out.
         ctxt.flushAx();
     } else {
@@ -226,15 +241,14 @@ void EncryptorT<P, U>::innerEncrypt(const PolynomialT<U> &ptxt, const KEY &key,
     ctxt.setNTT(ntt_type, modarith[0].getNTT(ntt_type)->getRootType());
 
     // Select RNG streams for this call. a_rng_ is non-null iff seed-only @c a
-    // mode is active; in that case the @c a part (uniform for secret-key, or
-    // v and e_a for public-key) must come solely from a_rng_ so it can be
-    // regenerated from the stored seed. The Gaussian error of the stored @c b
-    // part is drawn from error_rng_ (if a fixed error seed was given) else
-    // rng_.
-    const bool seed_only = (a_rng_ != nullptr);
-    RandomGenerator *a_src = seed_only ? a_rng_.get() : rng_.get();
+    // mode is active, which encrypt() restricts to secret-key encryption; there
+    // @c a is public uniform randomness and must come solely from a_rng_ so it
+    // can be regenerated from the stored seed. The Gaussian error of the stored
+    // @c b part is drawn from error_rng_ (if a fixed error seed was given) else
+    // rng_. The public-key paths below never use a_rng_: their @c a depends on
+    // the ephemeral v, so a stored seed would expose the plaintext.
+    RandomGenerator *a_src = a_rng_ ? a_rng_.get() : rng_.get();
     RandomGenerator *err_src = error_rng_ ? error_rng_.get() : rng_.get();
-    RandomGenerator *ea_src = seed_only ? a_rng_.get() : err_src;
 
     if constexpr (std::is_same_v<KEY, SecretKeyT<U>>) {
         deb_assert(key.numPoly() == num_secret * rank,
@@ -315,8 +329,8 @@ void EncryptorT<P, U>::innerEncrypt(const PolynomialT<U> &ptxt, const KEY &key,
             }
 
             PRAGMA_OMP(omp parallel) {
-                sampleZO(num_polyunit, ntt_type, a_src);
-                sampleGaussian(num_polyunit, ntt_type, ea_src);
+                sampleZO(num_polyunit, ntt_type, rng_.get());
+                sampleGaussian(num_polyunit, ntt_type, err_src);
                 mulPolyConstP<P>(modarith, vx_buffer_, key.ax(0),
                                  ctxt[num_secret], num_polyunit);
                 addPoly(modarith, ctxt[num_secret], ex_buffer_,
@@ -351,8 +365,8 @@ void EncryptorT<P, U>::innerEncrypt(const PolynomialT<U> &ptxt, const KEY &key,
             }
 
             PRAGMA_OMP(omp parallel) {
-                sampleZO(num_polyunit, ntt_type, a_src);
-                sampleGaussian(num_polyunit, ntt_type, ea_src);
+                sampleZO(num_polyunit, ntt_type, rng_.get());
+                sampleGaussian(num_polyunit, ntt_type, err_src);
                 mulPolyConstP<P>(modarith, vx_buffer_, key.ax(0), ctxt[rank],
                                  num_polyunit);
                 addPoly(modarith, ctxt[rank], ex_buffer_, ctxt[rank]);
@@ -607,10 +621,10 @@ template <typename U> void completeCiphertext(CiphertextT<U> &ctxt) {
         throw std::runtime_error(
             "[completeCiphertext] Ciphertext has no stored seed.");
     }
-    if (ctxt.seedMode() == CipherSeedMode::PUBLICKEY) {
+    if (ctxt.seedMode() != CipherSeedMode::UNIFORM) {
         throw std::runtime_error(
-            "[completeCiphertext] Public-key seed-only ciphertext requires the "
-            "encryption key; use Encryptor::completeCiphertext(ctxt, enckey).");
+            "[completeCiphertext] Ciphertext is not a uniform ('a' from seed) "
+            "seed-only ciphertext.");
     }
     if (!ctxt.isAxFlushed()) {
         return; // 'a' already present
@@ -630,52 +644,6 @@ template <typename U> void completeCiphertext(CiphertextT<U> &ctxt) {
 template <Preset P, typename U>
 void EncryptorT<P, U>::completeCiphertext(CiphertextT<U> &ctxt) const {
     deb::completeCiphertext(ctxt);
-}
-
-template <Preset P, typename U>
-void EncryptorT<P, U>::completeCiphertext(CiphertextT<U> &ctxt,
-                                          const SwitchKeyT<U> &enckey) const {
-    if (!ctxt.hasSeed()) {
-        throw std::runtime_error(
-            "[Encryptor::completeCiphertext] Ciphertext has no stored seed.");
-    }
-    if (ctxt.seedMode() == CipherSeedMode::UNIFORM) {
-        deb::completeCiphertext(ctxt); // secret-key case: no key needed
-        return;
-    }
-    if (ctxt.seedMode() != CipherSeedMode::PUBLICKEY) {
-        throw std::runtime_error(
-            "[Encryptor::completeCiphertext] Ciphertext is not seed-only.");
-    }
-    if (!ctxt.isAxFlushed()) {
-        return; // 'a' already present
-    }
-    const Size num_polyunit = ctxt[0].size();
-    const Size a_idx = ctxt.numPoly() - 1;
-    const utils::NTTType ntt_type = (ctxt.encoding() == REAL)
-                                        ? utils::NTTType::CYCLIC
-                                        : utils::NTTType::NEGACYCLIC;
-    // Reallocate 'a' and recompute a = v*ax(0) + e_a, replaying v and e_a from
-    // the stored seed in the exact order encryption drew them.
-    ctxt[a_idx] = PolynomialT<U>(preset, num_polyunit);
-    ctxt[a_idx].setNTT(ntt_type, modarith[0].getNTT(ntt_type)->getRootType());
-
-    auto rng = createRandomGenerator(ctxt.getSeed());
-    const int max_num_threads = static_cast<int>(num_polyunit * (degree >> 10));
-    utils::setOmpThreadLimit(max_num_threads);
-    PRAGMA_OMP(omp parallel) {
-        sampleZO(num_polyunit, ntt_type, rng.get());
-        sampleGaussian(num_polyunit, ntt_type, rng.get());
-        mulPolyConst(modarith, vx_buffer_, enckey.ax(0), ctxt[a_idx],
-                     num_polyunit);
-        addPoly(modarith, ctxt[a_idx], ex_buffer_, ctxt[a_idx]);
-    }
-    // Match the stored 'b' domain: a ntt_out==false ciphertext keeps 'b' (and
-    // hence 'a') in the coefficient domain.
-    if (!ctxt[0][0].isNTT()) {
-        backwardNTT(modarith, ctxt[a_idx], num_polyunit, ntt_type);
-    }
-    utils::unsetOmpThreadLimit();
 }
 
 #ifdef DEB_U64

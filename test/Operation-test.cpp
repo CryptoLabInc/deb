@@ -279,8 +279,22 @@ TEST_F(I128ArithTest, Edge_MaxPlusMinIsNegOne) {
 
 TEST_F(I128ArithTest, Edge_MaxMinusMinIsAllOnes) {
     // I128_MAX - I128_MIN wraps: (2^127-1) - (-2^127) = 2^128-1 ≡ -1 mod 2^128
-    // cast back to i128 → -1 (wraps)
+    // cast back to i128 → -1 (wraps). The overflow is intentional, so silence
+    // -Woverflow on just this constant-folded expression instead of disabling
+    // the warning for the whole target.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Woverflow"
+#elif defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Woverflow"
+#endif
     EXPECT_EQ(I128_MAX - I128_MIN, static_cast<i128>(-1));
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#elif defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 }
 
 // Random tests

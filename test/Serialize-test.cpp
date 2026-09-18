@@ -96,9 +96,17 @@ TEST_P(Serialize, PolyUnitSerializationTest) {
     serializeToStream(poly, os);
     std::istringstream is(os.str());
     PolyUnit deserialized_poly(prime, 0);
-    deserializeFromStream(is, deserialized_poly);
+    // A bare PolyUnit carries its own degree and prime, so a preset is required
+    // to bind them -- as it already is for Polynomial.
+    deserializeFromStream(is, deserialized_poly, preset);
 
     comparePolyUnit(poly, deserialized_poly);
+
+    // Without the preset there is nothing to validate the declared degree
+    // against, so the call is refused rather than trusting the buffer.
+    std::istringstream is_nopreset(os.str());
+    PolyUnit out(prime, 0);
+    EXPECT_THROW(deserializeFromStream(is_nopreset, out), std::runtime_error);
 }
 
 TEST_P(Serialize, PolySerializationTest) {
@@ -311,6 +319,215 @@ TEST_P(Serialize, SeedOnlyCipherSerializationTest) {
     MSGS dec = gen_empty_message<MSGS>();
     decryptor.decrypt(deserialized, sk, dec);
     compare_msg(msg, dec, scale_error(sk_err, 0));
+}
+
+// Deserialization consumes untrusted bytes, so every malformed shape must be
+// rejected with an exception rather than parsed. These checks are
+// unconditional: they must hold regardless of DEB_RUNTIME_RESOURCE_CHECK,
+// which previously gated the flatbuffers verifier call and compiled it out
+// entirely when off.
+TEST_P(Serialize, MalformedBufferIsRejected) {
+    // A valid buffer to corrupt, and a sanity check that it round-trips.
+    MSGS msg = gen_random_message<MSGS>();
+    msg = scale_message(msg, 0);
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    Ciphertext ctxt(preset);
+    encryptor.encrypt(msg, sk, ctxt);
+    std::ostringstream os;
+    serializeToStream(ctxt, os);
+    const std::string good = os.str();
+    {
+        std::istringstream is(good);
+        Ciphertext out(preset);
+        EXPECT_NO_THROW(deserializeFromStream(is, out));
+    }
+    ASSERT_GT(good.size(), sizeof(Size));
+
+    const auto with_prefix = [](Size n, const std::string &payload) {
+        std::string s(reinterpret_cast<const char *>(&n), sizeof(Size));
+        s += payload;
+        return s;
+    };
+    const std::string body = good.substr(sizeof(Size));
+
+    // Empty stream: the length prefix itself cannot be read.
+    {
+        std::istringstream is(std::string{});
+        Ciphertext out(preset);
+        EXPECT_THROW(deserializeFromStream(is, out), std::runtime_error);
+    }
+    // Zero-length payload.
+    {
+        std::istringstream is(with_prefix(0, std::string{}));
+        Ciphertext out(preset);
+        EXPECT_THROW(deserializeFromStream(is, out), std::runtime_error);
+    }
+    // Length prefix at or beyond the bound: must be refused by the bound
+    // itself, before any allocation is attempted. The payload is left tiny on
+    // purpose -- if the bound were removed, this would try to allocate 2 GiB
+    // rather than fail the check, so the case genuinely covers the bound.
+    {
+        std::istringstream is(with_prefix(DEB_MAX_SERIALIZED_SIZE, body));
+        Ciphertext out(preset);
+        EXPECT_THROW(deserializeFromStream(is, out), std::runtime_error);
+    }
+    {
+        std::istringstream is(
+            with_prefix(DEB_MAX_SERIALIZED_SIZE + 1, std::string{}));
+        Ciphertext out(preset);
+        EXPECT_THROW(deserializeFromStream(is, out), std::runtime_error);
+    }
+    // Length prefix longer than the bytes actually present (truncated stream).
+    {
+        std::istringstream is(
+            with_prefix(static_cast<Size>(body.size()), body.substr(0, 8)));
+        Ciphertext out(preset);
+        EXPECT_THROW(deserializeFromStream(is, out), std::runtime_error);
+    }
+    // Structurally invalid payload of a plausible length: caught by the
+    // flatbuffers verifier.
+    {
+        std::string garbage(body.size(), '\xA5');
+        std::istringstream is(
+            with_prefix(static_cast<Size>(garbage.size()), garbage));
+        Ciphertext out(preset);
+        EXPECT_THROW(deserializeFromStream(is, out), std::runtime_error);
+    }
+    // Truncated-but-well-prefixed payload: the declared length matches the
+    // bytes supplied, so only the verifier can reject it.
+    {
+        const std::string half = body.substr(0, body.size() / 2);
+        std::istringstream is(
+            with_prefix(static_cast<Size>(half.size()), half));
+        Ciphertext out(preset);
+        EXPECT_THROW(deserializeFromStream(is, out), std::runtime_error);
+    }
+}
+
+// A secret key blob is parsed with the destination sized from the preset alone,
+// so the declared coefficient count must be checked against it. Round-tripping
+// the library's own output must keep working.
+TEST_P(Serialize, SecretKeyRoundTripKeepsCoeffs) {
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    sk.allocCoeffs();
+    SecretKeyGenerator::GenCoeffInplace(preset, sk.coeffs(), sk.getSeed());
+    ASSERT_GT(sk.coeffsSize(), 0u);
+
+    std::ostringstream os;
+    serializeToStream(sk, os);
+    std::istringstream is(os.str());
+    SecretKey out(preset, false);
+    ASSERT_NO_THROW(deserializeFromStream(is, out));
+    EXPECT_EQ(out.coeffsSize(), sk.coeffsSize());
+    compareArray(sk.coeffs(), out.coeffs(), sk.coeffsSize());
+}
+
+// A self mod-pack key is sized by its pad_rank rather than the preset's gadget
+// rank. That rank is carried as the key's dnum, which is what lets
+// deserialization pin the key's shape exactly instead of merely bounding it.
+TEST_P(Serialize, ModPackSelfKeySerializationTest) {
+    if (num_secret != 1) {
+        GTEST_SKIP()
+            << "MODPACK_SELF key generation is only for single secret.";
+    }
+    KeyGenerator keygen(preset);
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    // Kept small on purpose: a self mod-pack key holds pad_rank*(1+num_secret)
+    // full polynomials, so a large pad_rank runs into the serialized-size
+    // ceiling rather than testing the shape validation. It must also differ
+    // from the gadget rank, which varies with the parameter set -- otherwise a
+    // dnum that silently fell back to the gadget rank would still look right.
+    Size pad_rank = 2;
+    while (pad_rank == get_gadget_rank(preset)) {
+        pad_rank *= 2;
+    }
+    if (pad_rank > degree) {
+        GTEST_SKIP() << "pad_rank must not exceed the degree.";
+    }
+
+    SwitchKey modkey = keygen.genModPackKeyBundle(pad_rank, sk);
+    ASSERT_EQ(modkey.axSize(), pad_rank);
+    ASSERT_EQ(modkey.bxSize(), pad_rank * num_secret);
+    // The generator records pad_rank as dnum, keeping axSize()==dnum() true for
+    // this kind as it already is for every other one.
+    ASSERT_EQ(modkey.dnum(), pad_rank);
+    ASSERT_NE(pad_rank, get_gadget_rank(preset))
+        << "pad_rank must differ from the gadget rank for this test to prove "
+           "that dnum really carries pad_rank";
+
+    std::ostringstream os;
+    serializeToStream(modkey, os);
+    std::istringstream is(os.str());
+    SwitchKey back(preset, SwitchKeyKind::SWK_MODPACK_SELF);
+    ASSERT_NO_THROW(deserializeFromStream(is, back));
+
+    EXPECT_EQ(back.type(), modkey.type());
+    EXPECT_EQ(back.dnum(), pad_rank);
+    EXPECT_EQ(back.axSize(), pad_rank);
+    EXPECT_EQ(back.bxSize(), pad_rank * num_secret);
+    for (Size i = 0; i < modkey.axSize(); ++i) {
+        comparePoly(modkey.ax(i), back.ax(i));
+    }
+    for (Size i = 0; i < modkey.bxSize(); ++i) {
+        comparePoly(modkey.bx(i), back.bx(i));
+    }
+}
+
+// serializeToStream refuses an object too large for one buffer, using this
+// bound. FlatBuffers' internal size counter is a uint32 whose only guard is an
+// assert that release builds compile out, so the bound has to be computed from
+// the object BEFORE building -- and it must never under-count, or the guard
+// lets through exactly the buffers it exists to stop.
+TEST_P(Serialize, SerializedSizeUpperBoundNeverUnderCounts) {
+    const auto check = [](const char *what, const auto &obj) {
+        std::ostringstream os;
+        serializeToStream(obj, os);
+        const u64 actual = os.str().size();
+        const u64 bound = serializedSizeUpperBound(obj);
+        EXPECT_GE(bound, actual) << what << ": bound under-counts";
+        // Loose enough to survive a FlatBuffers bump, tight enough that the
+        // bound still means something.
+        EXPECT_LT(bound, actual * 2) << what << ": bound is uselessly loose";
+    };
+
+    Message msg = gen_random_message<MSGS>()[0];
+    check("Message", msg);
+    check("CoeffMessage", gen_random_coeff<COEFFS>()[0]);
+    check("FMessage", gen_random_message<FMSGS>()[0]);
+    check("FCoeffMessage", gen_random_coeff<FCOEFFS>()[0]);
+
+    Polynomial poly(preset);
+    check("Polynomial", poly);
+    check("PolyUnit", poly[0]);
+
+    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
+    check("SecretKey", sk);
+
+    MSGS msgs = gen_random_message<MSGS>();
+    msgs = scale_message(msgs, 0);
+    Ciphertext ctxt(preset);
+    encryptor.encrypt(msgs, sk, ctxt);
+    check("Ciphertext", ctxt);
+
+    // A seed-only ciphertext releases its 'a' part, so the bound must follow
+    // the real per-polynomial shapes rather than any preset-derived limb count.
+    Ciphertext seed_only(preset);
+    encryptor.encrypt(msgs, sk, seed_only, EncryptOptions().SeedOnlyA(true));
+    check("Ciphertext seed-only", seed_only);
+
+    KeyGenerator keygen(preset);
+    check("SwitchKey enc", keygen.genEncKey(sk));
+    check("SwitchKey mult", keygen.genMultKey(sk));
+}
+
+// A write failure must not pass silently: a failed first write makes the second
+// a no-op, so without a check a truncated record is indistinguishable from a
+// complete one.
+TEST_P(Serialize, SerializeReportsStreamFailure) {
+    Message msg = gen_random_message<MSGS>()[0];
+    std::ostringstream os;
+    os.setstate(std::ios::badbit);
+    EXPECT_THROW(serializeToStream(msg, os), std::runtime_error);
 }
 
 #define X(PRESET) Preset::PRESET_##PRESET,

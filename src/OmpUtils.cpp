@@ -22,13 +22,17 @@
 #endif
 
 namespace deb::utils {
-static int g_omp_threads = -1;
+#ifdef DEB_OPENMP
+// Only the OpenMP paths below touch this; declaring it unconditionally makes it
+// an unused variable in a build without OpenMP.
+static thread_local int tl_omp_threads = -1;
+#endif
 
-void setOmpThreadLimit([[__maybe_unused__]] int max_threads) {
+void setOmpThreadLimit([[maybe_unused]] int max_threads) {
 #ifdef DEB_OPENMP
     int current = omp_get_max_threads();
-    if (g_omp_threads == -1) {
-        g_omp_threads = current;
+    if (tl_omp_threads == -1) {
+        tl_omp_threads = current;
     }
     if (max_threads < current) {
         omp_set_num_threads(max_threads);
@@ -38,9 +42,9 @@ void setOmpThreadLimit([[__maybe_unused__]] int max_threads) {
 
 void unsetOmpThreadLimit() {
 #ifdef DEB_OPENMP
-    if (g_omp_threads != -1) {
-        omp_set_num_threads(g_omp_threads);
-        g_omp_threads = -1;
+    if (tl_omp_threads != -1) {
+        omp_set_num_threads(tl_omp_threads);
+        tl_omp_threads = -1;
     } else {
         const char *env_p = std::getenv("OMP_NUM_THREADS");
         if (env_p != nullptr) {
@@ -49,6 +53,43 @@ void unsetOmpThreadLimit() {
         }
     }
 #endif
+}
+
+namespace {
+// Thin wrappers that keep the #ifdef out of OmpThreadLimitGuard, so the guard
+// reads both of its members in every build configuration. Guarding the member
+// accesses instead would leave them untouched without OpenMP, and silencing
+// that needs [[maybe_unused]] on a non-static data member -- which GCC ignores
+// with a warning.
+int currentThreadCount() {
+#ifdef DEB_OPENMP
+    return omp_get_max_threads();
+#else
+    return 0;
+#endif
+}
+
+void applyThreadCount([[maybe_unused]] int threads) {
+#ifdef DEB_OPENMP
+    omp_set_num_threads(threads);
+#endif
+}
+} // namespace
+
+OmpThreadLimitGuard::OmpThreadLimitGuard(int max_threads)
+    : prev_(currentThreadCount()), applied_(false) {
+    // Without OpenMP the current count reads as 0, so no limit is ever applied
+    // and the guard is inert.
+    if (max_threads < prev_) {
+        applied_ = true;
+        applyThreadCount(max_threads);
+    }
+}
+
+OmpThreadLimitGuard::~OmpThreadLimitGuard() {
+    if (applied_) {
+        applyThreadCount(prev_);
+    }
 }
 
 } // namespace deb::utils

@@ -350,8 +350,12 @@ enum class CipherSeedMode : u8 {
     NONE = 0, /**< Not seed-compressed; @c a is stored in full. */
     UNIFORM =
         1, /**< Secret-key origin: @c a is a uniform sample of the seed. */
-    PUBLICKEY = 2, /**< Public-key origin: @c a = v*ax + e; expanding requires
-                      the encryption key. */
+    // Value 2 was PUBLICKEY (public-key origin, a = v*ax + e_a). It was removed
+    // because the stored seed also reproduces the ephemeral encryption
+    // randomness v, so publishing it reveals the plaintext to anyone holding
+    // the ciphertext and the public encryption key. Seed compression is only
+    // sound when 'a' is uniform. Buffers carrying it are rejected on
+    // deserialization; do not reuse the value.
 };
 
 /**
@@ -568,6 +572,17 @@ public:
     void setRotIdx(Size rot_idx) noexcept;
     Size rotIdx() const noexcept;
     Size dnum() const noexcept;
+    /**
+     * @brief Sets the decomposition count, which is also the number of @c ax
+     * polynomials the key holds.
+     *
+     * Every key kind keeps the invariant @c axSize()==dnum() and
+     * @c bxSize()==dnum()*num_secret. A self mod-pack key is sized by its
+     * @c pad_rank rather than the preset's gadget rank, so its generator uses
+     * this to record that rank; serialization relies on it to validate the
+     * key's shape.
+     */
+    void setDnum(Size dnum) noexcept;
 
     void
     addAx(const Size num_polyunit, std::optional<Size> size = std::nullopt,

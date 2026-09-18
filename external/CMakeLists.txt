@@ -15,6 +15,7 @@
 # ~~~
 
 include(CPM)
+include(warnings)
 
 cpmaddpackage(
   NAME
@@ -45,6 +46,25 @@ if(DEB_SERIALIZE_API)
   set(flatbuffers_SOURCE_DIR
       ${flatbuffers_SOURCE_DIR}
       CACHE PATH "" FORCE)
+
+  # flatbuffers is built from source via CPM. Keep its (and flatc's) compilation
+  # quiet so a consumer project's global warning flags don't surface warnings we
+  # neither own nor can fix. Also mark its headers as SYSTEM so the warnings
+  # don't leak through the generated headers we include either.
+  foreach(_fb_target flatbuffers flatbuffers_shared flatc flatlib)
+    set_deb_no_warnings(${_fb_target})
+  endforeach()
+  if(TARGET flatbuffers)
+    get_target_property(_fb_inc flatbuffers INTERFACE_INCLUDE_DIRECTORIES)
+    if(_fb_inc)
+      # Keep INTERFACE_INCLUDE_DIRECTORIES intact (it is what actually adds the
+      # headers to the compile line); INTERFACE_SYSTEM_INCLUDE_DIRECTORIES only
+      # flags which of those already-listed dirs are treated as -isystem.
+      set_target_properties(
+        flatbuffers PROPERTIES INTERFACE_SYSTEM_INCLUDE_DIRECTORIES
+                               "${_fb_inc}")
+    endif()
+  endif()
 endif()
 
 string(TOUPPER "${DEB_EXT_LIB_FOR_SECURE_ZERO}" _deb_secure_zero_backend)

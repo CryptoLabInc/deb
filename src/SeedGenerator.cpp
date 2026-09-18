@@ -18,40 +18,49 @@
 
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <random>
 
 namespace deb {
+
+namespace {
+// Guards the singleton's RNG state: both Gen() and Reseed() mutate it, and
+// either may be called concurrently from user threads.
+std::mutex g_rng_mutex;
+
+RNGSeed makeEntropySeed() {
+    std::random_device rd;
+    RNGSeed seed = {};
+    for (size_t i = 0; i < seed.size(); ++i) {
+        auto ptr = reinterpret_cast<unsigned int *>(&seed[i]);
+        for (size_t j = 0; j < sizeof(u64) / sizeof(unsigned int); ++j) {
+            ptr[j] = rd();
+        }
+    }
+    return seed;
+}
+} // namespace
 
 SeedGenerator &SeedGenerator::GetInstance(const std::optional<RNGSeed> &seed) {
     static SeedGenerator instance(seed);
     return instance;
 }
 void SeedGenerator::Reseed(const std::optional<RNGSeed> &seed) {
-    const auto &s = seed.value();
-    GetInstance().rng_->reseed(reinterpret_cast<const u8 *>(s.data()),
-                               DEB_RNG_SEED_BYTE_SIZE);
+    const RNGSeed s = seed ? *seed : makeEntropySeed();
+    SeedGenerator &instance = GetInstance();
+    std::lock_guard<std::mutex> lock(g_rng_mutex);
+    instance.rng_->reseed(reinterpret_cast<const u8 *>(s.data()),
+                          DEB_RNG_SEED_BYTE_SIZE);
 }
 
 RNGSeed SeedGenerator::Gen() { return GetInstance().genSeed(); }
 
-SeedGenerator::SeedGenerator(const std::optional<RNGSeed> &seed) {
-    if (!seed) {
-        std::random_device rd;
-        RNGSeed nseed = {};
-        for (size_t i = 0; i < nseed.size(); ++i) {
-            auto ptr = reinterpret_cast<unsigned int *>(&nseed[i]);
-            for (size_t j = 0; j < sizeof(u64) / sizeof(unsigned int); ++j) {
-                ptr[j] = rd();
-            }
-        }
-        rng_ = createRandomGenerator(nseed);
-    } else {
-        rng_ = createRandomGenerator(seed.value());
-    }
-}
+SeedGenerator::SeedGenerator(const std::optional<RNGSeed> &seed)
+    : rng_(createRandomGenerator(seed ? *seed : makeEntropySeed())) {}
 
 RNGSeed SeedGenerator::genSeed() {
     RNGSeed seed = {};
+    std::lock_guard<std::mutex> lock(g_rng_mutex);
     rng_->getRandomUint64Array(seed.data(), DEB_U64_SEED_SIZE);
     return seed;
 }

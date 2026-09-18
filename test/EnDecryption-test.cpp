@@ -321,53 +321,59 @@ TEST_P(EnDecrypt, SeedOnlyDeterministicRegeneration) {
     }
 }
 
-// Public-key seed-only encryption: 'a' = v*ax + e cannot be regenerated without
-// the encryption key, so the decryptor must refuse and
-// completeCiphertext(enckey) is required first.
-TEST_P(EnDecrypt, SeedOnlyEncryptAndDecryptWithEncKey) {
+// Seed compression is unsound under a public key: 'a' = v*ax + e_a is drawn
+// from the same stream as the ephemeral encryption randomness v, so storing
+// that seed would let anyone holding the ciphertext and the (public) encryption
+// key replay v and recover the plaintext without the secret key. encrypt() must
+// refuse the combination outright.
+TEST_P(EnDecrypt, SeedOnlyRejectedForPublicKey) {
     MSGS msg = gen_random_message<MSGS>();
     SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
     SwitchKey enckey = KeyGenerator(preset).genEncKey(sk);
-    MSGS decrypted_msg = gen_empty_message<MSGS>();
 
-    for (Size l = 0; l < get_num_p(preset); ++l) {
+    {
+        Ciphertext ctxt(preset);
+        EXPECT_THROW(encryptor.encrypt(msg, enckey, ctxt,
+                                       EncryptOptions().SeedOnlyA(true)),
+                     std::runtime_error);
+    }
+    { // A caller-supplied a_seed must not provide a way around the check.
+        Ciphertext ctxt(preset);
+        EXPECT_THROW(
+            encryptor.encrypt(
+                msg, enckey, ctxt,
+                EncryptOptions().ASeed(SeedGenerator::Gen()).SeedOnlyA(true)),
+            std::runtime_error);
+    }
+    { // Nor does the coefficient-domain output path.
+        Ciphertext ctxt(preset);
+        EXPECT_THROW(
+            encryptor.encrypt(msg, enckey, ctxt,
+                              EncryptOptions().NTTOut(false).SeedOnlyA(true)),
+            std::runtime_error);
+    }
+
+    // Public-key encryption without seed compression is unaffected, and the
+    // same option is still accepted for secret-key encryption.
+    {
+        const Size l = 0;
         Ciphertext ctxt(preset, l);
         MSGS scaled_msg = scale_message(msg, l);
-        encryptor.encrypt(scaled_msg, enckey, ctxt,
-                          EncryptOptions().Level(l).SeedOnlyA(true));
-        EXPECT_TRUE(ctxt.hasSeed());
-        EXPECT_TRUE(ctxt.isAxFlushed());
+        MSGS decrypted_msg = gen_empty_message<MSGS>();
+        EXPECT_NO_THROW(encryptor.encrypt(scaled_msg, enckey, ctxt,
+                                          EncryptOptions().Level(l)));
+        EXPECT_FALSE(ctxt.hasSeed());
         EXPECT_EQ(static_cast<int>(ctxt.seedMode()),
-                  static_cast<int>(CipherSeedMode::PUBLICKEY));
-
-        MSGS tmp = gen_empty_message<MSGS>();
-        EXPECT_THROW(decryptor.decrypt(ctxt, sk, tmp), std::runtime_error);
-
-        encryptor.completeCiphertext(ctxt, enckey);
-        EXPECT_FALSE(ctxt.isAxFlushed());
+                  static_cast<int>(CipherSeedMode::NONE));
         decryptor.decrypt(ctxt, sk, decrypted_msg);
         compare_msg(scaled_msg, decrypted_msg, scale_error(enc_err, l));
     }
-}
-
-// Public-key path is deterministic from (a_seed, error_seed, enckey).
-TEST_P(EnDecrypt, SeedOnlyEncKeyDeterministicRegeneration) {
-    MSGS msg = gen_random_message<MSGS>();
-    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    SwitchKey enckey = KeyGenerator(preset).genEncKey(sk);
-    RNGSeed a_seed = SeedGenerator::Gen();
-    RNGSeed e_seed = SeedGenerator::Gen();
-    auto opt = EncryptOptions().ASeed(a_seed).ErrorSeed(e_seed).SeedOnlyA(true);
-
-    Ciphertext c1(preset), c2(preset);
-    encryptor.encrypt(msg, enckey, c1, opt);
-    encryptor.encrypt(msg, enckey, c2, opt);
-    encryptor.completeCiphertext(c1, enckey);
-    encryptor.completeCiphertext(c2, enckey);
-
-    ASSERT_EQ(c1.numPoly(), c2.numPoly());
-    for (Size p = 0; p < c1.numPoly(); ++p) {
-        comparePoly(c1[p], c2[p]);
+    {
+        Ciphertext ctxt(preset);
+        EXPECT_NO_THROW(
+            encryptor.encrypt(msg, sk, ctxt, EncryptOptions().SeedOnlyA(true)));
+        EXPECT_EQ(static_cast<int>(ctxt.seedMode()),
+                  static_cast<int>(CipherSeedMode::UNIFORM));
     }
 }
 
@@ -395,31 +401,6 @@ TEST_P(EnDecrypt, SeedOnlyNttOutFalseWithSecretKey) {
         completeCiphertext(ctxt);
         ASSERT_FALSE(ctxt.isAxFlushed());
         EXPECT_EQ(ctxt[ctxt.numPoly() - 1][0].isNTT(), ctxt[0][0].isNTT());
-    }
-}
-
-TEST_P(EnDecrypt, SeedOnlyNttOutFalseWithEncKey) {
-    MSGS msg = gen_random_message<MSGS>();
-    SecretKey sk = SecretKeyGenerator::GenSecretKey(preset);
-    SwitchKey enckey = KeyGenerator(preset).genEncKey(sk);
-    MSGS decrypted_msg = gen_empty_message<MSGS>();
-
-    for (Size l = 0; l < get_num_p(preset); ++l) {
-        Ciphertext ctxt(preset, l);
-        MSGS scaled_msg = scale_message(msg, l);
-        encryptor.encrypt(
-            scaled_msg, enckey, ctxt,
-            EncryptOptions().Level(l).NTTOut(false).SeedOnlyA(true));
-        EXPECT_FALSE(ctxt[0][0].isNTT());
-
-        MSGS tmp = gen_empty_message<MSGS>();
-        EXPECT_THROW(decryptor.decrypt(ctxt, sk, tmp), std::runtime_error);
-
-        encryptor.completeCiphertext(ctxt, enckey);
-        ASSERT_FALSE(ctxt.isAxFlushed());
-        EXPECT_EQ(ctxt[ctxt.numPoly() - 1][0].isNTT(), ctxt[0][0].isNTT());
-        decryptor.decrypt(ctxt, sk, decrypted_msg);
-        compare_msg(scaled_msg, decrypted_msg, scale_error(enc_err, l));
     }
 }
 
