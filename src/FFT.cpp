@@ -84,7 +84,7 @@ void computeSingleStep(deb::ComplexT<T> *op, deb::Size size, deb::Size gap,
     }
 
     // optimization for small gap
-    std::array<deb::ComplexT<T>, 4> root{};
+    static std::array<deb::ComplexT<T>, 4> root;
     if (gap <= 4)
         for (deb::u64 i = 0; i < gap; ++i)
             root[i] = roots_ptr[i];
