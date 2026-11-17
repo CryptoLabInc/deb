@@ -40,6 +40,11 @@ add_executable(Operation-test Operation-test.cpp)
 target_link_libraries(Operation-test PRIVATE ${deb_test})
 add_gtest_target_to_ctest(Operation-test)
 
+# FFT Test
+add_executable(FFT-test FFT-test.cpp)
+target_link_libraries(FFT-test PRIVATE ${deb_test})
+add_gtest_target_to_ctest(FFT-test)
+
 if(DEB_SUPPORT_U64)
   # EnDecryption Test
   add_executable(EnDecryption-test EnDecryption-test.cpp)
